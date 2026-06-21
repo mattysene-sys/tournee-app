@@ -189,6 +189,10 @@ function useSyncedState(code, syncTick, setSyncTick) {
     planning: lireLocal("tournee_planning", {}),
     departs: lireLocal("tournee_departs", {}),
   }));
+  const donneesRef = useRef(donnees);
+  useEffect(() => {
+    donneesRef.current = donnees;
+  }, [donnees]);
 
   const debounceRef = useRef(null);
 
@@ -212,6 +216,17 @@ function useSyncedState(code, syncTick, setSyncTick) {
     [code, setSyncTick]
   );
 
+  // Pousse immédiatement, sans attendre le debounce — utile après un import volumineux,
+  // où on veut être certain que les données soient bien sur le serveur avant que
+  // l'utilisateur ferme l'onglet ou change d'appareil.
+  const forcerSyncMaintenant = useCallback(async () => {
+    if (!code) return false;
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    const ok = await sauvegarderDonneesDistantes(code, donneesRef.current);
+    setSyncTick((t) => ({ ...t, dernier: ok ? "ok" : "erreur", heure: Date.now() }));
+    return ok;
+  }, [code, setSyncTick]);
+
   const update = useCallback(
     (cle, updater) => {
       setDonneesState((prev) => {
@@ -232,7 +247,23 @@ function useSyncedState(code, syncTick, setSyncTick) {
     [persistLocal]
   );
 
-  return { donnees, update, remplacerTout };
+  // Variante fonctionnelle : utile pour fusionner avec la valeur la plus à jour
+  // du state (évite les soucis de "closure" qui capturent une vieille valeur).
+  const setDonneesEtPersist = useCallback(
+    (updater) => {
+      setDonneesState((prev) => {
+        const next = typeof updater === "function" ? updater(prev) : updater;
+        persistLocal(next);
+        // On pousse aussi vers Supabase si la fusion a réellement changé quelque chose,
+        // pour que ce dispositif redevienne à son tour la source à jour.
+        if (next !== prev) pousserVersSupabase(next);
+        return next;
+      });
+    },
+    [persistLocal, pousserVersSupabase]
+  );
+
+  return { donnees, update, remplacerTout, setDonneesEtPersist, forcerSyncMaintenant };
 }
 
 // ============================================================
@@ -545,30 +576,35 @@ export default function Root() {
 // ============================================================
 function App({ code, onDeconnecter }) {
   const [syncTick, setSyncTick] = useState({ dernier: null, heure: null });
-  const { donnees, update, remplacerTout } = useSyncedState(code, syncTick, setSyncTick);
+  const { donnees, update, remplacerTout, setDonneesEtPersist, forcerSyncMaintenant } = useSyncedState(code, syncTick, setSyncTick);
   const { clients, geoCache, planning, departs } = donnees;
   const setClients = useCallback((u) => update("clients", u), [update]);
   const setGeoCache = useCallback((u) => update("geoCache", u), [update]);
   const setPlanning = useCallback((u) => update("planning", u), [update]);
   const setDeparts = useCallback((u) => update("departs", u), [update]);
 
-  // Au premier chargement avec un code, on tente de récupérer la version distante
-  // (utile si on arrive sur un nouvel appareil qui n'a rien en local).
+  // Au premier chargement avec un code, on récupère systématiquement la version
+  // distante et on la fusionne avec le local : la version la plus riche en clients
+  // l'emporte. Cela évite de dépendre d'un état local "vide" parfois mal détecté
+  // (par exemple un cache resté partiellement rempli sur un appareil).
   const [chargementInitial, setChargementInitial] = useState(true);
   useEffect(() => {
     let annule = false;
     chargerDonneesDistantes(code)
       .then((distant) => {
         if (annule || !distant) return;
-        const localVide = clients.length === 0 && Object.keys(planning).length === 0 && Object.keys(departs).length === 0;
-        if (localVide) {
-          remplacerTout({
-            clients: distant.clients || [],
-            geoCache: distant.geoCache || {},
-            planning: distant.planning || {},
-            departs: distant.departs || {},
-          });
-        }
+        setDonneesEtPersist((local) => {
+          const distantPlusRiche = (distant.clients || []).length > (local.clients || []).length;
+          if (distantPlusRiche) {
+            return {
+              clients: distant.clients || [],
+              geoCache: { ...(local.geoCache || {}), ...(distant.geoCache || {}) },
+              planning: Object.keys(distant.planning || {}).length > 0 ? distant.planning : local.planning,
+              departs: Object.keys(distant.departs || {}).length > 0 ? distant.departs : local.departs,
+            };
+          }
+          return local;
+        });
       })
       .catch(() => {})
       .finally(() => {
@@ -618,6 +654,8 @@ function App({ code, onDeconnecter }) {
       showToast(`${parsed.length} clients importés`, "ok");
       await geocoderTousLesClients(parsed);
       initialiserPlanningDepuisImport(parsed);
+      setImportStatus("synchronisation");
+      await forcerSyncMaintenant();
       setImportStatus("termine");
       setVue("prochain-rdv");
     } catch (err) {
@@ -1075,9 +1113,12 @@ function App({ code, onDeconnecter }) {
                   </div>
                 </div>
               )}
+              {importStatus === "synchronisation" && (
+                <div style={{ marginTop: 14, fontSize: 13, color: "var(--gris)" }}>Envoi vers le serveur partagé...</div>
+              )}
               {importStatus === "termine" && (
                 <div style={{ marginTop: 14, fontSize: 13, color: "var(--vert)", display: "flex", alignItems: "center", gap: 6 }}>
-                  <CheckCircle2 size={15} /> {clients.length} clients prêts, {clients.filter((c) => c.coords).length} localisés
+                  <CheckCircle2 size={15} /> {clients.length} clients prêts et synchronisés — disponibles sur tes autres appareils
                 </div>
               )}
               {erreur && (
