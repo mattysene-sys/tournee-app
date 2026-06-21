@@ -1,8 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from "react";
-import * as XLSX from "xlsx";
-import { MapPin, Clock, Upload, RefreshCw, Calendar, AlertCircle, CheckCircle2, Sparkles, Trophy, ShieldAlert, Phone, Mail, History, X, Search, ChevronDown } from "lucide-react";
-
-// ============================================================
+impa================================================
 // Constantes
 // ============================================================
 const VITESSE_MOYENNE_KMH = 38;
@@ -796,22 +792,12 @@ function App({ code, onDeconnecter }) {
     } else if (mode.type === "horizon") {
       const fin = new Date(aujourdHuiDate);
       fin.setDate(fin.getDate() + mode.jours);
-      // jours déjà planifiés dans la fenêtre
+      // jours déjà planifiés dans la fenêtre (ceux-là sont prioritaires : on a déjà
+      // d'autres RDV ce jour-là, donc le surcoût de trajet sera réellement différenciant)
       Object.keys(departs).forEach((d) => {
         const dd = new Date(d + "T00:00:00");
         if (dd >= aujourdHuiDate && dd <= fin) ajouterDomicileSiAbsent(d);
       });
-      // + on propose aussi le domicile sur quelques jours ouvrés bien répartis dans la
-      // fenêtre s'ils n'ont encore aucun départ défini, pour ne pas se limiter aux seuls
-      // jours déjà connus de l'utilisateur.
-      if (domicile) {
-        let cur = new Date(aujourdHuiDate);
-        while (cur <= fin) {
-          const dk = dateToKey(cur);
-          if (cur.getDay() !== 0) ajouterDomicileSiAbsent(dk);
-          cur.setDate(cur.getDate() + 1);
-        }
-      }
     }
 
     const joursAvecDepart =
@@ -826,6 +812,30 @@ function App({ code, onDeconnecter }) {
             return dd >= aujourdHuiDate && dd <= fin;
           })
         : Object.keys(departs).filter((d) => departs[d].coords);
+
+    // Sur un horizon large, si aucun jour planifié de la fenêtre n'a de RDV existant,
+    // tous les jours via domicile seraient à coût de trajet identique — comparer le
+    // trajet n'aurait alors aucun sens. Dans ce cas précis, on retombe sur un critère
+    // simple et utile : proposer le jour le plus proche dans le temps, sur quelques
+    // jours ouvrés bien répartis (1 par semaine), plutôt qu'un classement par trajet.
+    const auMoinsUnJourAvecRdvExistant = joursAvecDepart.some((d) => departs[d]);
+    if (mode.type === "horizon" && !auMoinsUnJourAvecRdvExistant && domicile) {
+      const fin = new Date(aujourdHuiDate);
+      fin.setDate(fin.getDate() + mode.jours);
+      let cur = new Date(aujourdHuiDate);
+      cur.setDate(cur.getDate() + 1); // on commence à demain
+      let semaineOffset = 0;
+      while (cur <= fin && semaineOffset < 12) {
+        if (cur.getDay() === 2) {
+          // un mardi par semaine, jour type pour une tournée, espacé sur toute la période
+          const dk = dateToKey(cur);
+          ajouterDomicileSiAbsent(dk);
+          if (!joursAvecDepart.includes(dk)) joursAvecDepart.push(dk);
+          semaineOffset++;
+        }
+        cur.setDate(cur.getDate() + 1);
+      }
+    }
 
     if (joursAvecDepart.length === 0) {
       if (mode.type === "date" && !domicile) {
