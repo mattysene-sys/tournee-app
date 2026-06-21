@@ -1,4 +1,8 @@
-impa================================================
+import React, { useState, useEffect, useCallback, useRef } from "react";
+import * as XLSX from "xlsx";
+import { MapPin, Clock, Upload, RefreshCw, Calendar, AlertCircle, CheckCircle2, Sparkles, Trophy, ShieldAlert, Phone, Mail, History, X, Search, ChevronDown } from "lucide-react";
+
+// ============================================================
 // Constantes
 // ============================================================
 const VITESSE_MOYENNE_KMH = 38;
@@ -630,7 +634,7 @@ function App({ code, onDeconnecter }) {
   const [clientSelectionne, setClientSelectionne] = useState(null);
   const [suggestions, setSuggestions] = useState(null);
   const [calcEnCours, setCalcEnCours] = useState(false);
-  const [modeRecherche, setModeRecherche] = useState("semaine"); // "semaine" | "horizon" | "date"
+  const [modeRecherche, setModeRecherche] = useState("urgent"); // "urgent" | "suivi" | "semaine" | "date"
   const [horizonJours, setHorizonJours] = useState(90); // ~3 mois par défaut
   const [dateChoisie, setDateChoisie] = useState("");
   const [erreur, setErreur] = useState("");
@@ -764,7 +768,7 @@ function App({ code, onDeconnecter }) {
   }
 
   // ---------- Recherche du meilleur créneau pour un client ----------
-  // mode: { type: "semaine" } | { type: "horizon", jours: N } | { type: "date", date: "YYYY-MM-DD" }
+  // mode: { type: "semaine" } | { type: "urgent" } | { type: "suivi", jours: N, derniereVisite } | { type: "date", date: "YYYY-MM-DD" }
   async function chercherCreneau(client, mode = { type: "semaine" }) {
     setErreur("");
     setSuggestions(null);
@@ -776,7 +780,7 @@ function App({ code, onDeconnecter }) {
     // Construit la liste des jours candidats selon le mode choisi.
     // Pour les jours qui n'ont pas encore de point de départ mais qui tombent dans la
     // période demandée, on utilise automatiquement le domicile par défaut s'il existe :
-    // ça permet de proposer un RDV dans 3 mois même si ce jour-là n'a encore rien de prévu.
+    // ça permet de proposer un RDV même si ce jour-là n'a encore rien de prévu.
     const departsEtendus = { ...departs };
     const aujourdHuiDate = new Date();
     aujourdHuiDate.setHours(0, 0, 0, 0);
@@ -787,54 +791,57 @@ function App({ code, onDeconnecter }) {
       }
     }
 
-    if (mode.type === "date") {
-      ajouterDomicileSiAbsent(mode.date);
-    } else if (mode.type === "horizon") {
-      const fin = new Date(aujourdHuiDate);
-      fin.setDate(fin.getDate() + mode.jours);
-      // jours déjà planifiés dans la fenêtre (ceux-là sont prioritaires : on a déjà
-      // d'autres RDV ce jour-là, donc le surcoût de trajet sera réellement différenciant)
-      Object.keys(departs).forEach((d) => {
-        const dd = new Date(d + "T00:00:00");
-        if (dd >= aujourdHuiDate && dd <= fin) ajouterDomicileSiAbsent(d);
-      });
-    }
-
-    const joursAvecDepart =
-      mode.type === "date"
-        ? Object.keys(departsEtendus).filter((d) => d === mode.date && departsEtendus[d].coords)
-        : mode.type === "horizon"
-        ? Object.keys(departsEtendus).filter((d) => {
-            if (!departsEtendus[d].coords) return false;
-            const dd = new Date(d + "T00:00:00");
-            const fin = new Date(aujourdHuiDate);
-            fin.setDate(fin.getDate() + mode.jours);
-            return dd >= aujourdHuiDate && dd <= fin;
-          })
-        : Object.keys(departs).filter((d) => departs[d].coords);
-
-    // Sur un horizon large, si aucun jour planifié de la fenêtre n'a de RDV existant,
-    // tous les jours via domicile seraient à coût de trajet identique — comparer le
-    // trajet n'aurait alors aucun sens. Dans ce cas précis, on retombe sur un critère
-    // simple et utile : proposer le jour le plus proche dans le temps, sur quelques
-    // jours ouvrés bien répartis (1 par semaine), plutôt qu'un classement par trajet.
-    const auMoinsUnJourAvecRdvExistant = joursAvecDepart.some((d) => departs[d]);
-    if (mode.type === "horizon" && !auMoinsUnJourAvecRdvExistant && domicile) {
-      const fin = new Date(aujourdHuiDate);
-      fin.setDate(fin.getDate() + mode.jours);
-      let cur = new Date(aujourdHuiDate);
-      cur.setDate(cur.getDate() + 1); // on commence à demain
-      let semaineOffset = 0;
-      while (cur <= fin && semaineOffset < 12) {
-        if (cur.getDay() === 2) {
-          // un mardi par semaine, jour type pour une tournée, espacé sur toute la période
+    // Ajoute au tableau `joursAvecDepart` chaque jour ouvré (hors dimanche) d'une fenêtre
+    // [debut, fin], en réutilisant un départ déjà existant ou le domicile par défaut sinon.
+    function ajouterFenetreJoursOuvres(joursAvecDepart, debut, fin) {
+      let cur = new Date(debut);
+      while (cur <= fin) {
+        if (cur.getDay() !== 0) {
           const dk = dateToKey(cur);
           ajouterDomicileSiAbsent(dk);
-          if (!joursAvecDepart.includes(dk)) joursAvecDepart.push(dk);
-          semaineOffset++;
+          if (departsEtendus[dk] && !joursAvecDepart.includes(dk)) joursAvecDepart.push(dk);
         }
         cur.setDate(cur.getDate() + 1);
       }
+    }
+
+    let joursAvecDepart = [];
+
+    if (mode.type === "date") {
+      ajouterDomicileSiAbsent(mode.date);
+      joursAvecDepart = Object.keys(departsEtendus).filter((d) => d === mode.date && departsEtendus[d].coords);
+    } else if (mode.type === "semaine") {
+      joursAvecDepart = Object.keys(departs).filter((d) => departs[d].coords);
+    } else if (mode.type === "urgent") {
+      // Les 14 prochains jours, en priorité les jours déjà planifiés (trajet comparable),
+      // complétés par le domicile sur les jours encore vides.
+      const fin = new Date(aujourdHuiDate);
+      fin.setDate(fin.getDate() + 14);
+      ajouterFenetreJoursOuvres(joursAvecDepart, aujourdHuiDate, fin);
+    } else if (mode.type === "suivi") {
+      // Date cible = dernière visite + intervalle choisi, ou aujourd'hui + intervalle
+      // si le client n'a jamais été vu. On cherche ensuite dans une fenêtre resserrée
+      // autour de cette cible plutôt que dans toute la période, pour respecter le rythme
+      // de suivi voulu (ex. tous les 3 mois) au lieu de prendre le premier trajet pratique.
+      const base = mode.derniereVisite ? new Date(mode.derniereVisite + "T00:00:00") : new Date(aujourdHuiDate);
+      const cible = new Date(base);
+      cible.setDate(cible.getDate() + mode.jours);
+      // la cible ne peut pas être dans le passé
+      const cibleEffective = cible < aujourdHuiDate ? new Date(aujourdHuiDate) : cible;
+      const debutFenetre = new Date(cibleEffective);
+      debutFenetre.setDate(debutFenetre.getDate() - 10);
+      if (debutFenetre < aujourdHuiDate) debutFenetre.setTime(aujourdHuiDate.getTime());
+      const finFenetre = new Date(cibleEffective);
+      finFenetre.setDate(finFenetre.getDate() + 10);
+      ajouterFenetreJoursOuvres(joursAvecDepart, debutFenetre, finFenetre);
+    }
+
+    let dateCibleSuivi = null;
+    if (mode.type === "suivi") {
+      const base = mode.derniereVisite ? new Date(mode.derniereVisite + "T00:00:00") : new Date(aujourdHuiDate);
+      const cible = new Date(base);
+      cible.setDate(cible.getDate() + mode.jours);
+      dateCibleSuivi = cible < aujourdHuiDate ? new Date(aujourdHuiDate) : cible;
     }
 
     if (joursAvecDepart.length === 0) {
@@ -885,7 +892,26 @@ function App({ code, onDeconnecter }) {
         });
       }
     });
-    suggestionsParJour.sort((a, b) => a.coutSupplementaire - b.coutSupplementaire);
+    if (mode.type === "urgent") {
+      // Priorité absolue à la date la plus proche ; le coût de trajet ne sert qu'à
+      // départager les options d'un même jour.
+      suggestionsParJour.sort((a, b) => {
+        if (a.jour !== b.jour) return a.jour < b.jour ? -1 : 1;
+        return a.coutSupplementaire - b.coutSupplementaire;
+      });
+    } else if (mode.type === "suivi" && dateCibleSuivi) {
+      // Priorité à la proximité de la date cible (ex. ~3 mois après la dernière visite),
+      // le coût de trajet départage les jours équidistants de la cible.
+      const cibleTime = dateCibleSuivi.getTime();
+      suggestionsParJour.sort((a, b) => {
+        const ecartA = Math.abs(new Date(a.jour + "T00:00:00").getTime() - cibleTime);
+        const ecartB = Math.abs(new Date(b.jour + "T00:00:00").getTime() - cibleTime);
+        if (ecartA !== ecartB) return ecartA - ecartB;
+        return a.coutSupplementaire - b.coutSupplementaire;
+      });
+    } else {
+      suggestionsParJour.sort((a, b) => a.coutSupplementaire - b.coutSupplementaire);
+    }
     setCalcEnCours(false);
 
     if (suggestionsParJour.length === 0) {
@@ -897,7 +923,16 @@ function App({ code, onDeconnecter }) {
       return;
     }
     setClientSelectionne(client);
-    setSuggestions(suggestionsParJour.slice(0, 3));
+    if (mode.type === "urgent" || mode.type === "suivi") {
+      // On garde la meilleure option par jour, puis les 3 meilleurs jours distincts.
+      const meilleureParJour = new Map();
+      suggestionsParJour.forEach((s) => {
+        if (!meilleureParJour.has(s.jour)) meilleureParJour.set(s.jour, s);
+      });
+      setSuggestions(Array.from(meilleureParJour.values()).slice(0, 3));
+    } else {
+      setSuggestions(suggestionsParJour.slice(0, 3));
+    }
   }
 
   function retenirCreneau(sugg) {
@@ -1289,13 +1324,18 @@ function App({ code, onDeconnecter }) {
               <div className="tr-card-title"><Sparkles size={14} /> Choisir un client</div>
 
               <div className="tr-field">
-                <label className="tr-label">Période de recherche</label>
+                <label className="tr-label">Type de recherche</label>
                 <div className="tr-mode-row">
+                  <button className={`tr-mode-btn ${modeRecherche === "urgent" ? "active" : ""}`} onClick={() => setModeRecherche("urgent")}>
+                    Urgent — dès que possible
+                  </button>
+                  <button className={`tr-mode-btn ${modeRecherche === "suivi" ? "active" : ""}`} onClick={() => setModeRecherche("suivi")}>
+                    Suivi régulier
+                  </button>
+                </div>
+                <div className="tr-mode-row" style={{ marginTop: 6 }}>
                   <button className={`tr-mode-btn ${modeRecherche === "semaine" ? "active" : ""}`} onClick={() => setModeRecherche("semaine")}>
                     Semaine en cours
-                  </button>
-                  <button className={`tr-mode-btn ${modeRecherche === "horizon" ? "active" : ""}`} onClick={() => setModeRecherche("horizon")}>
-                    Dans les prochains mois
                   </button>
                   <button className={`tr-mode-btn ${modeRecherche === "date" ? "active" : ""}`} onClick={() => setModeRecherche("date")}>
                     Date précise
@@ -1303,14 +1343,17 @@ function App({ code, onDeconnecter }) {
                 </div>
               </div>
 
-              {modeRecherche === "horizon" && (
+              {modeRecherche === "suivi" && (
                 <div className="tr-field">
-                  <label className="tr-label">Dans combien de temps ?</label>
+                  <label className="tr-label">Revoir ce client tous les...</label>
                   <div className="tr-mode-row">
                     <button className={`tr-mode-btn ${horizonJours === 30 ? "active" : ""}`} onClick={() => setHorizonJours(30)}>1 mois</button>
                     <button className={`tr-mode-btn ${horizonJours === 90 ? "active" : ""}`} onClick={() => setHorizonJours(90)}>3 mois</button>
                     <button className={`tr-mode-btn ${horizonJours === 180 ? "active" : ""}`} onClick={() => setHorizonJours(180)}>6 mois</button>
                   </div>
+                  <p style={{ fontSize: 11.5, color: "var(--gris)", marginTop: 6, marginBottom: 0 }}>
+                    L'appli vise une date autour de cet intervalle après la dernière visite (ou à partir d'aujourd'hui si jamais vu).
+                  </p>
                 </div>
               )}
 
@@ -1336,8 +1379,10 @@ function App({ code, onDeconnecter }) {
                         return;
                       }
                       const mode =
-                        modeRecherche === "horizon"
-                          ? { type: "horizon", jours: horizonJours }
+                        modeRecherche === "urgent"
+                          ? { type: "urgent" }
+                          : modeRecherche === "suivi"
+                          ? { type: "suivi", jours: horizonJours, derniereVisite: c.derniereVisite }
                           : modeRecherche === "date"
                           ? { type: "date", date: dateChoisie }
                           : { type: "semaine" };
