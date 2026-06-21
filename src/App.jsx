@@ -188,6 +188,7 @@ function useSyncedState(code, syncTick, setSyncTick) {
     geoCache: lireLocal("tournee_geocache", {}),
     planning: lireLocal("tournee_planning", {}),
     departs: lireLocal("tournee_departs", {}),
+    domicile: lireLocal("tournee_domicile", null), // { adresse, coords, heure }
   }));
   const donneesRef = useRef(donnees);
   useEffect(() => {
@@ -201,6 +202,7 @@ function useSyncedState(code, syncTick, setSyncTick) {
     ecrireLocal("tournee_geocache", next.geoCache);
     ecrireLocal("tournee_planning", next.planning);
     ecrireLocal("tournee_departs", next.departs);
+    ecrireLocal("tournee_domicile", next.domicile || null);
   }, []);
 
   const pousserVersSupabase = useCallback(
@@ -577,11 +579,12 @@ export default function Root() {
 function App({ code, onDeconnecter }) {
   const [syncTick, setSyncTick] = useState({ dernier: null, heure: null });
   const { donnees, update, remplacerTout, setDonneesEtPersist, forcerSyncMaintenant } = useSyncedState(code, syncTick, setSyncTick);
-  const { clients, geoCache, planning, departs } = donnees;
+  const { clients, geoCache, planning, departs, domicile } = donnees;
   const setClients = useCallback((u) => update("clients", u), [update]);
   const setGeoCache = useCallback((u) => update("geoCache", u), [update]);
   const setPlanning = useCallback((u) => update("planning", u), [update]);
   const setDeparts = useCallback((u) => update("departs", u), [update]);
+  const setDomicile = useCallback((u) => update("domicile", u), [update]);
 
   // Au premier chargement avec un code, on récupère systématiquement la version
   // distante et on la fusionne avec le local : la version la plus riche en clients
@@ -601,7 +604,15 @@ function App({ code, onDeconnecter }) {
               geoCache: { ...(local.geoCache || {}), ...(distant.geoCache || {}) },
               planning: Object.keys(distant.planning || {}).length > 0 ? distant.planning : local.planning,
               departs: Object.keys(distant.departs || {}).length > 0 ? distant.departs : local.departs,
+              domicile: distant.domicile || local.domicile || null,
             };
+          }
+          // Même si les clients locaux sont déjà plus riches, on récupère quand même
+          // un domicile distant si on n'en a pas encore localement (cas : domicile
+          // défini sur l'appareil A, on ouvre l'appli pour la 1ère fois sur l'appareil B
+          // qui a déjà ses propres clients importés séparément).
+          if (!local.domicile && distant.domicile) {
+            return { ...local, domicile: distant.domicile };
           }
           return local;
         });
@@ -833,6 +844,30 @@ function App({ code, onDeconnecter }) {
     showToast(`${clientSelectionne.etablissement} placé le ${formatDateFr(sugg.jour)} à ${minToHHMM(sugg.arrivee)}`, "ok");
     setSuggestions(null);
     setClientSelectionne(null);
+  }
+
+  // ---------- Définir le domicile par défaut (une seule fois, réutilisable chaque jour) ----------
+  async function definirDomicile(adresseTexte, heure) {
+    try {
+      const coords = await geocoder(adresseTexte + ", France");
+      if (!coords) {
+        showToast("Adresse introuvable", "error");
+        return false;
+      }
+      setDomicile({ adresse: adresseTexte, coords, heure: heure || "08:30" });
+      showToast("Domicile enregistré comme point de départ par défaut", "ok");
+      return true;
+    } catch {
+      showToast("Service de géocodage indisponible", "error");
+      return false;
+    }
+  }
+
+  // Applique directement le domicile enregistré à un jour donné, sans re-géocoder.
+  function appliquerDomicileAuJour(dateKey, heure) {
+    if (!domicile) return;
+    setDeparts((d) => ({ ...d, [dateKey]: { adresse: domicile.adresse, coords: domicile.coords, heure: heure || domicile.heure || "08:30" } }));
+    showToast(`Domicile utilisé comme départ du ${formatDateFr(dateKey)}`, "ok");
   }
 
   // ---------- Définir un point de départ pour un jour ----------
@@ -1256,6 +1291,9 @@ function App({ code, onDeconnecter }) {
             rdvParJourCalcule={rdvParJourCalcule}
             joursTries={joursTries}
             ouvrirPlanB={ouvrirPlanB}
+            domicile={domicile}
+            definirDomicile={definirDomicile}
+            appliquerDomicileAuJour={appliquerDomicileAuJour}
           />
         )}
       </div>
@@ -1316,10 +1354,13 @@ function App({ code, onDeconnecter }) {
 // ============================================================
 // Sous-composant : vue Semaine
 // ============================================================
-function SemaineView({ departs, definirDepartJour, rdvParJourCalcule, joursTries, ouvrirPlanB }) {
+function SemaineView({ departs, definirDepartJour, rdvParJourCalcule, joursTries, ouvrirPlanB, domicile, definirDomicile, appliquerDomicileAuJour }) {
   const [nouveauJour, setNouveauJour] = useState("");
   const [adresseInput, setAdresseInput] = useState("");
   const [heureInput, setHeureInput] = useState("08:30");
+  const [domicileInput, setDomicileInput] = useState(domicile ? domicile.adresse : "");
+  const [domicileHeureInput, setDomicileHeureInput] = useState(domicile ? domicile.heure : "08:30");
+  const [enregistrementDomicile, setEnregistrementDomicile] = useState(false);
 
   const aujourdHui = dateToKey(new Date());
   const joursAffiches = Array.from(new Set([...joursTries, ...Object.keys(departs)])).sort();
@@ -1330,31 +1371,79 @@ function SemaineView({ departs, definirDepartJour, rdvParJourCalcule, joursTries
     setAdresseInput("");
   }
 
+  async function sauvegarderDomicile() {
+    if (!domicileInput.trim()) return;
+    setEnregistrementDomicile(true);
+    await definirDomicile(domicileInput.trim(), domicileHeureInput);
+    setEnregistrementDomicile(false);
+  }
+
+  function utiliserDomicilePourNouveauJour() {
+    if (!nouveauJour || !domicile) return;
+    appliquerDomicileAuJour(nouveauJour, heureInput || domicile.heure);
+  }
+
   return (
     <div className="tr-grid">
-      <div className="tr-card">
-        <div className="tr-card-title"><MapPin size={14} /> Définir un point de départ</div>
-        <div className="tr-field">
-          <label className="tr-label">Jour</label>
-          <input className="tr-input" type="date" value={nouveauJour} min={aujourdHui} onChange={(e) => setNouveauJour(e.target.value)} />
+      <div>
+        <div className="tr-card">
+          <div className="tr-card-title"><MapPin size={14} /> Mon domicile (départ par défaut)</div>
+          {domicile && (
+            <div style={{ fontSize: 13, marginBottom: 10, padding: "8px 10px", background: "var(--vert-clair)", borderRadius: 7 }}>
+              <strong>{domicile.adresse}</strong>
+              <div style={{ fontSize: 11.5, color: "var(--gris)" }}>Départ habituel à {domicile.heure}</div>
+            </div>
+          )}
+          <div className="tr-field">
+            <label className="tr-label">Adresse de domicile</label>
+            <input className="tr-input" placeholder="Ex. 12 rue de la Paix, Bordeaux" value={domicileInput} onChange={(e) => setDomicileInput(e.target.value)} />
+          </div>
+          <div className="tr-field">
+            <label className="tr-label">Heure de départ habituelle</label>
+            <input className="tr-input" type="time" value={domicileHeureInput} onChange={(e) => setDomicileHeureInput(e.target.value)} />
+          </div>
+          <button className="tr-btn tr-btn-primary tr-btn-full" onClick={sauvegarderDomicile} disabled={enregistrementDomicile}>
+            <MapPin size={14} /> {enregistrementDomicile ? "Enregistrement..." : domicile ? "Mettre à jour mon domicile" : "Enregistrer mon domicile"}
+          </button>
+          <p style={{ fontSize: 11.5, color: "var(--gris)", marginTop: 8, marginBottom: 0 }}>
+            Une fois enregistré, tu pourras l'appliquer en un clic à n'importe quel jour ci-dessous.
+          </p>
         </div>
-        <div className="tr-field">
-          <label className="tr-label">Adresse de départ</label>
-          <input className="tr-input" placeholder="Ex. 12 rue X, Bordeaux" value={adresseInput} onChange={(e) => setAdresseInput(e.target.value)} />
+
+        <div className="tr-card">
+          <div className="tr-card-title"><Calendar size={14} /> Point de départ d'un jour précis</div>
+          <div className="tr-field">
+            <label className="tr-label">Jour</label>
+            <input className="tr-input" type="date" value={nouveauJour} min={aujourdHui} onChange={(e) => setNouveauJour(e.target.value)} />
+          </div>
+          {domicile && (
+            <button
+              className="tr-btn tr-btn-outline tr-btn-full"
+              style={{ marginBottom: 12 }}
+              onClick={utiliserDomicilePourNouveauJour}
+              disabled={!nouveauJour}
+            >
+              <MapPin size={14} /> Utiliser mon domicile pour ce jour
+            </button>
+          )}
+          <div className="tr-field">
+            <label className="tr-label">Ou une autre adresse de départ</label>
+            <input className="tr-input" placeholder="Ex. 12 rue X, Bordeaux" value={adresseInput} onChange={(e) => setAdresseInput(e.target.value)} />
+          </div>
+          <div className="tr-field">
+            <label className="tr-label">Heure de départ</label>
+            <input className="tr-input" type="time" value={heureInput} onChange={(e) => setHeureInput(e.target.value)} />
+          </div>
+          <button className="tr-btn tr-btn-outline tr-btn-full" onClick={ajouterDepart}>
+            <MapPin size={14} /> Enregistrer cette adresse pour ce jour
+          </button>
         </div>
-        <div className="tr-field">
-          <label className="tr-label">Heure de départ</label>
-          <input className="tr-input" type="time" value={heureInput} onChange={(e) => setHeureInput(e.target.value)} />
-        </div>
-        <button className="tr-btn tr-btn-outline tr-btn-full" onClick={ajouterDepart}>
-          <MapPin size={14} /> Enregistrer ce départ
-        </button>
       </div>
 
       <div className="tr-card">
         <div className="tr-card-title"><Calendar size={14} /> Vue de la semaine</div>
         {joursAffiches.length === 0 ? (
-          <div className="tr-empty">Aucun jour planifié. Commence par définir un point de départ à gauche.</div>
+          <div className="tr-empty">Aucun jour planifié. Commence par définir ton domicile ou un point de départ à gauche.</div>
         ) : (
           joursAffiches.map((dateKey) => {
             const depart = departs[dateKey];
