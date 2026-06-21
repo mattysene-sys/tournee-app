@@ -634,6 +634,9 @@ function App({ code, onDeconnecter }) {
   const [clientSelectionne, setClientSelectionne] = useState(null);
   const [suggestions, setSuggestions] = useState(null);
   const [calcEnCours, setCalcEnCours] = useState(false);
+  const [modeRecherche, setModeRecherche] = useState("semaine"); // "semaine" | "horizon" | "date"
+  const [horizonJours, setHorizonJours] = useState(90); // ~3 mois par défaut
+  const [dateChoisie, setDateChoisie] = useState("");
   const [erreur, setErreur] = useState("");
   const [toast, setToast] = useState(null);
   const [rdvAnnule, setRdvAnnule] = useState(null);
@@ -737,10 +740,11 @@ function App({ code, onDeconnecter }) {
 
   // Construit rdvParJour utilisable par le moteur, avec coords résolues, en estimant les
   // horaires d'arrivée séquentiellement depuis le départ du jour.
-  function construireRdvParJour() {
+  function construireRdvParJour(departsCustom) {
+    const departsUtilises = departsCustom || departs;
     const out = {};
     Object.keys(planning).forEach((dateKey) => {
-      const depart = departs[dateKey] || { coords: null, heure: "08:30" };
+      const depart = departsUtilises[dateKey] || { coords: null, heure: "08:30" };
       const ids = (planning[dateKey] || []).map((r) => r.clientId);
       const items = ids
         .map((id) => clientsById[id])
@@ -764,31 +768,80 @@ function App({ code, onDeconnecter }) {
   }
 
   // ---------- Recherche du meilleur créneau pour un client ----------
-  async function chercherCreneau(client) {
+  // mode: { type: "semaine" } | { type: "horizon", jours: N } | { type: "date", date: "YYYY-MM-DD" }
+  async function chercherCreneau(client, mode = { type: "semaine" }) {
     setErreur("");
     setSuggestions(null);
     if (!client.coords) {
       setErreur(`${client.etablissement} n'est pas localisé. Relance le géocodage ou vérifie son adresse.`);
       return;
     }
-    const joursAvecDepart = Object.keys(departs).filter((d) => departs[d].coords);
+
+    // Construit la liste des jours candidats selon le mode choisi.
+    // Pour les jours qui n'ont pas encore de point de départ mais qui tombent dans la
+    // période demandée, on utilise automatiquement le domicile par défaut s'il existe :
+    // ça permet de proposer un RDV dans 3 mois même si ce jour-là n'a encore rien de prévu.
+    const departsEtendus = { ...departs };
+    const aujourdHuiDate = new Date();
+    aujourdHuiDate.setHours(0, 0, 0, 0);
+
+    function ajouterDomicileSiAbsent(dateKey) {
+      if (!departsEtendus[dateKey] && domicile) {
+        departsEtendus[dateKey] = { adresse: domicile.adresse, coords: domicile.coords, heure: domicile.heure || "08:30" };
+      }
+    }
+
+    if (mode.type === "date") {
+      ajouterDomicileSiAbsent(mode.date);
+    } else if (mode.type === "horizon") {
+      const fin = new Date(aujourdHuiDate);
+      fin.setDate(fin.getDate() + mode.jours);
+      // jours déjà planifiés dans la fenêtre
+      Object.keys(departs).forEach((d) => {
+        const dd = new Date(d + "T00:00:00");
+        if (dd >= aujourdHuiDate && dd <= fin) ajouterDomicileSiAbsent(d);
+      });
+      // + on propose aussi le domicile sur quelques jours ouvrés bien répartis dans la
+      // fenêtre s'ils n'ont encore aucun départ défini, pour ne pas se limiter aux seuls
+      // jours déjà connus de l'utilisateur.
+      if (domicile) {
+        let cur = new Date(aujourdHuiDate);
+        while (cur <= fin) {
+          const dk = dateToKey(cur);
+          if (cur.getDay() !== 0) ajouterDomicileSiAbsent(dk);
+          cur.setDate(cur.getDate() + 1);
+        }
+      }
+    }
+
+    const joursAvecDepart =
+      mode.type === "date"
+        ? Object.keys(departsEtendus).filter((d) => d === mode.date && departsEtendus[d].coords)
+        : mode.type === "horizon"
+        ? Object.keys(departsEtendus).filter((d) => {
+            if (!departsEtendus[d].coords) return false;
+            const dd = new Date(d + "T00:00:00");
+            const fin = new Date(aujourdHuiDate);
+            fin.setDate(fin.getDate() + mode.jours);
+            return dd >= aujourdHuiDate && dd <= fin;
+          })
+        : Object.keys(departs).filter((d) => departs[d].coords);
+
     if (joursAvecDepart.length === 0) {
-      setErreur("Définis au moins un point de départ (onglet « Ma semaine ») pour pouvoir comparer les trajets.");
+      if (mode.type === "date" && !domicile) {
+        setErreur("Pour proposer une date sans départ déjà défini, enregistre d'abord ton domicile (onglet « Ma semaine »), ou définis un départ pour ce jour précis.");
+      } else {
+        setErreur("Définis au moins un point de départ (onglet « Ma semaine ») pour pouvoir comparer les trajets.");
+      }
       return;
     }
     setCalcEnCours(true);
-    const rdvParJour = construireRdvParJour();
+    const rdvParJour = construireRdvParJour(departsEtendus);
     await new Promise((r) => setTimeout(r, 250));
-    const sugg = genererSuggestionsCreneau(
-      client,
-      rdvParJour,
-      joursAvecDepart,
-      departs[joursAvecDepart[0]] // sera ré-indexé par jour dans le moteur via depart de chaque jour
-    );
     // Le moteur a besoin du départ propre à chaque jour : on reconstruit proprement ici
     const suggestionsParJour = [];
     joursAvecDepart.forEach((jourKey) => {
-      const depart = departs[jourKey];
+      const depart = departsEtendus[jourKey];
       const rdvJour = (rdvParJour[jourKey] || []).slice().sort((a, b) => a.heureArrivee - b.heureArrivee);
       const sequence = [{ isDepart: true, coords: depart.coords, fin: hhmmToMin(depart.heure || "08:30") }, ...rdvJour];
 
@@ -818,6 +871,7 @@ function App({ code, onDeconnecter }) {
           coutSupplementaire,
           arrivee,
           fin,
+          departAUtiliser: !departs[jourKey] ? depart : null, // si on a dû créer ce départ à la volée (domicile), il faudra le persister au moment du choix
         });
       }
     });
@@ -825,7 +879,11 @@ function App({ code, onDeconnecter }) {
     setCalcEnCours(false);
 
     if (suggestionsParJour.length === 0) {
-      setErreur("Aucun créneau ne convient sur les jours actuellement planifiés. Ajoute un point de départ sur d'autres jours.");
+      setErreur(
+        mode.type === "semaine"
+          ? "Aucun créneau ne convient sur les jours actuellement planifiés. Ajoute un point de départ sur d'autres jours, ou élargis la recherche."
+          : "Aucun créneau ne convient sur la période choisie."
+      );
       return;
     }
     setClientSelectionne(client);
@@ -834,6 +892,11 @@ function App({ code, onDeconnecter }) {
 
   function retenirCreneau(sugg) {
     if (!clientSelectionne) return;
+    // Si ce créneau utilise un point de départ qui n'existait pas encore pour ce jour
+    // (cas d'un RDV lointain placé via le domicile), on le persiste maintenant.
+    if (sugg.departAUtiliser) {
+      setDeparts((d) => ({ ...d, [sugg.jour]: sugg.departAUtiliser }));
+    }
     setPlanning((p) => ({
       ...p,
       [sugg.jour]: [...(p[sugg.jour] || []), { clientId: clientSelectionne.id, heureArrivee: sugg.arrivee, heureFin: sugg.fin }],
@@ -1012,6 +1075,14 @@ function App({ code, onDeconnecter }) {
 
         /* ----- Liste clients ----- */
         .tr-search { position: relative; margin-bottom: 12px; }
+        .tr-mode-row { display: flex; gap: 6px; flex-wrap: wrap; }
+        .tr-mode-btn {
+          font-family: 'Oswald', sans-serif; font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.02em;
+          padding: 7px 11px; border-radius: 999px; border: 1.5px solid var(--gris-clair); background: white;
+          color: var(--ardoise); cursor: pointer; transition: all 0.15s ease; flex: 1; min-width: 90px;
+        }
+        .tr-mode-btn.active { background: var(--orange); border-color: var(--orange); color: white; }
+        .tr-mode-btn:hover:not(.active) { border-color: var(--orange-clair); }
         .tr-search input { padding-left: 34px; }
         .tr-search svg { position: absolute; left: 11px; top: 50%; transform: translateY(-50%); color: var(--gris); }
         .tr-clients-list { max-height: 480px; overflow-y: auto; display: grid; gap: 7px; }
@@ -1206,13 +1277,63 @@ function App({ code, onDeconnecter }) {
           <div className="tr-grid">
             <div className="tr-card">
               <div className="tr-card-title"><Sparkles size={14} /> Choisir un client</div>
+
+              <div className="tr-field">
+                <label className="tr-label">Période de recherche</label>
+                <div className="tr-mode-row">
+                  <button className={`tr-mode-btn ${modeRecherche === "semaine" ? "active" : ""}`} onClick={() => setModeRecherche("semaine")}>
+                    Semaine en cours
+                  </button>
+                  <button className={`tr-mode-btn ${modeRecherche === "horizon" ? "active" : ""}`} onClick={() => setModeRecherche("horizon")}>
+                    Dans les prochains mois
+                  </button>
+                  <button className={`tr-mode-btn ${modeRecherche === "date" ? "active" : ""}`} onClick={() => setModeRecherche("date")}>
+                    Date précise
+                  </button>
+                </div>
+              </div>
+
+              {modeRecherche === "horizon" && (
+                <div className="tr-field">
+                  <label className="tr-label">Dans combien de temps ?</label>
+                  <div className="tr-mode-row">
+                    <button className={`tr-mode-btn ${horizonJours === 30 ? "active" : ""}`} onClick={() => setHorizonJours(30)}>1 mois</button>
+                    <button className={`tr-mode-btn ${horizonJours === 90 ? "active" : ""}`} onClick={() => setHorizonJours(90)}>3 mois</button>
+                    <button className={`tr-mode-btn ${horizonJours === 180 ? "active" : ""}`} onClick={() => setHorizonJours(180)}>6 mois</button>
+                  </div>
+                </div>
+              )}
+
+              {modeRecherche === "date" && (
+                <div className="tr-field">
+                  <label className="tr-label">Date souhaitée</label>
+                  <input className="tr-input" type="date" value={dateChoisie} min={dateToKey(new Date())} onChange={(e) => setDateChoisie(e.target.value)} />
+                </div>
+              )}
+
               <div className="tr-search">
                 <Search size={15} />
                 <input className="tr-input" placeholder="Rechercher un établissement ou une ville..." value={recherche} onChange={(e) => setRecherche(e.target.value)} />
               </div>
               <div className="tr-clients-list">
                 {clientsFiltres.slice(0, 60).map((c) => (
-                  <div key={c.id} className="tr-client-row" onClick={() => chercherCreneau(c)}>
+                  <div
+                    key={c.id}
+                    className="tr-client-row"
+                    onClick={() => {
+                      if (modeRecherche === "date" && !dateChoisie) {
+                        setErreur("Choisis d'abord une date.");
+                        return;
+                      }
+                      const mode =
+                        modeRecherche === "horizon"
+                          ? { type: "horizon", jours: horizonJours }
+                          : modeRecherche === "date"
+                          ? { type: "date", date: dateChoisie }
+                          : { type: "semaine" };
+                      chercherCreneau(c, mode);
+                    }}
+                  >
                     <span className="tr-pression-dot" style={{ background: PRESSION_COLOR[c.pression] || "var(--gris)" }}></span>
                     <div className="tr-client-row-main">
                       <div className="tr-client-row-name">{c.etablissement}</div>
