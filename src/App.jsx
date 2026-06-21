@@ -102,7 +102,7 @@ function joursOuvres(depuis, nbJours) {
   let d = new Date(depuis);
   while (out.length < nbJours) {
     const day = d.getDay();
-    if (day !== 0) out.push(new Date(d)); // on exclut le dimanche, samedi gardé
+    if (day !== 0 && day !== 6) out.push(new Date(d)); // on exclut samedi et dimanche
     d.setDate(d.getDate() + 1);
   }
   return out;
@@ -791,12 +791,14 @@ function App({ code, onDeconnecter }) {
       }
     }
 
-    // Ajoute au tableau `joursAvecDepart` chaque jour ouvré (hors dimanche) d'une fenêtre
-    // [debut, fin], en réutilisant un départ déjà existant ou le domicile par défaut sinon.
+    // Ajoute au tableau `joursAvecDepart` chaque jour ouvré (lundi à vendredi) d'une
+    // fenêtre [debut, fin], en réutilisant un départ déjà existant ou le domicile par
+    // défaut sinon.
     function ajouterFenetreJoursOuvres(joursAvecDepart, debut, fin) {
       let cur = new Date(debut);
       while (cur <= fin) {
-        if (cur.getDay() !== 0) {
+        const jourSemaine = cur.getDay(); // 0 = dimanche, 6 = samedi
+        if (jourSemaine !== 0 && jourSemaine !== 6) {
           const dk = dateToKey(cur);
           ajouterDomicileSiAbsent(dk);
           if (departsEtendus[dk] && !joursAvecDepart.includes(dk)) joursAvecDepart.push(dk);
