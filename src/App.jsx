@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import * as XLSX from "xlsx";
 import { MapPin, Clock, Upload, RefreshCw, Calendar, AlertCircle, CheckCircle2, Sparkles, Trophy, ShieldAlert, Phone, Mail, History, X, Search, ChevronDown } from "lucide-react";
-
+import AgendaView from "./AgendaView";
 // ============================================================
 // Constantes
 // ============================================================
@@ -189,6 +189,7 @@ function useSyncedState(code, syncTick, setSyncTick) {
     planning: lireLocal("tournee_planning", {}),
     departs: lireLocal("tournee_departs", {}),
     domicile: lireLocal("tournee_domicile", null), // { adresse, coords, heure }
+    agendaRdvs: lireLocal("tournee_agendardvs", []),
   }));
   const donneesRef = useRef(donnees);
   useEffect(() => {
@@ -203,6 +204,8 @@ function useSyncedState(code, syncTick, setSyncTick) {
     ecrireLocal("tournee_planning", next.planning);
     ecrireLocal("tournee_departs", next.departs);
     ecrireLocal("tournee_domicile", next.domicile || null);
+    ecrireLocal("tournee_agendardvs", next.agendaRdvs);
+    
   }, []);
 
   const pousserVersSupabase = useCallback(
@@ -585,6 +588,7 @@ function App({ code, onDeconnecter }) {
   const setPlanning = useCallback((u) => update("planning", u), [update]);
   const setDeparts = useCallback((u) => update("departs", u), [update]);
   const setDomicile = useCallback((u) => update("domicile", u), [update]);
+  const setAgendaRdvs = useCallback((u) => update("agendaRdvs", u), [update]);
 
   // Au premier chargement avec un code, on récupère systématiquement la version
   // distante et on la fusionne avec le local : la version la plus riche en clients
@@ -1232,6 +1236,9 @@ function App({ code, onDeconnecter }) {
             </button>
             <button className={`tr-tab ${vue === "semaine" ? "active" : ""}`} onClick={() => setVue("semaine")} disabled={clients.length === 0}>
               Ma semaine
+              <button className={`tr-tab ${vue === "agenda" ? "active" : ""}`} onClick={() => setVue("agenda")} disabled={clients.length === 0}>
+  Agenda
+</button>
             </button>
             <button className="tr-tab" onClick={onDeconnecter} title="Changer d'espace">
               ⎋
@@ -1463,6 +1470,14 @@ function App({ code, onDeconnecter }) {
 
         {/* ---------------- VUE : MA SEMAINE ---------------- */}
         {vue === "semaine" && (
+      {vue === "agenda" && (
+  <AgendaView
+    planning={planning}
+    rdvParJourCalcule={rdvParJourCalcule}
+    agendaRdvs={donnees.agendaRdvs || []}
+    setAgendaRdvs={setAgendaRdvs}
+  />
+)}
           <SemaineView
             departs={departs}
             definirDepartJour={definirDepartJour}
