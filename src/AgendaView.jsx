@@ -1,5 +1,6 @@
 import React, { useState, useRef, useCallback } from "react";
-import { ChevronLeft, ChevronRight, Plus, X, Calendar, RefreshCw, CheckCircle2, Clock } from "lucide-react";
+import { ChevronLeft, ChevronRight, Plus, X, Calendar, RefreshCw, CheckCircle2, Clock, Send } from "lucide-react";
+import { useGoogleCalendar } from "../hooks/useGoogleCalendar";
 
 const HEURES_DEBUT = 8;
 const HEURES_FIN = 19;
@@ -267,6 +268,65 @@ export default function AgendaView({ planning, rdvParJourCalcule, agendaRdvs, se
   const [googleEvents, setGoogleEvents]   = useState(() => { try { return JSON.parse(localStorage.getItem("tournee_google_events") || "[]"); } catch { return []; } });
   const [showConfig, setShowConfig]       = useState(false);
 
+  // ── Export vers Google Agenda ──
+  const { isReady, isLoading: gcalLoading, authorize, createEvent } = useGoogleCalendar();
+  const [exportStatut, setExportStatut] = useState(null); // null | 'en_cours' | 'ok' | 'erreur'
+  const [exportProgress, setExportProgress] = useState({ fait: 0, total: 0 });
+  const [exportErreurs, setExportErreurs] = useState([]);
+  const [showExportPanel, setShowExportPanel] = useState(false);
+
+  async function exporterVersGoogleAgenda() {
+    const rdvsAExporter = [];
+    Object.entries(rdvParJourCalcule).forEach(([dateKey, items]) => {
+      items.forEach(item => {
+        const override = (agendaRdvs || []).find(r => r.overrideTournee === item.client.id && r.jour === dateKey);
+        rdvsAExporter.push({
+          client: item.client,
+          date: dateKey,
+          debut: override ? override.debut : minToHHMM(item.heureArrivee),
+          fin:   override ? override.fin   : minToHHMM(item.fin),
+          duree: override
+            ? (timeToMin(override.fin) - timeToMin(override.debut))
+            : (item.client.dureeDefaut || 20),
+        });
+      });
+    });
+
+    if (rdvsAExporter.length === 0) {
+      setExportStatut("erreur");
+      setExportErreurs(["Aucun RDV planifié à exporter."]);
+      return;
+    }
+
+    if (!isReady) {
+      await authorize();
+      // Après authorize, l'utilisateur devra recliquer
+      return;
+    }
+
+    setExportStatut("en_cours");
+    setExportProgress({ fait: 0, total: rdvsAExporter.length });
+    setExportErreurs([]);
+
+    const erreurs = [];
+    for (let i = 0; i < rdvsAExporter.length; i++) {
+      const r = rdvsAExporter[i];
+      try {
+        await createEvent({ pharmacie: r.client, date: r.date, heure: r.debut, duree: r.duree });
+      } catch (err) {
+        erreurs.push(`${r.client.etablissement} : ${err.message}`);
+      }
+      setExportProgress({ fait: i + 1, total: rdvsAExporter.length });
+      await new Promise(res => setTimeout(res, 200));
+    }
+
+    setExportErreurs(erreurs);
+    setExportStatut(erreurs.length === rdvsAExporter.length ? "erreur" : "ok");
+  }
+
+  // Compter les RDV planifiés (toutes semaines)
+  const totalRdvPlanifies = Object.values(rdvParJourCalcule).reduce((acc, items) => acc + items.length, 0);
+
   const [dragInfo, setDragInfo]       = useState(null);
   const [dropPreview, setDropPreview] = useState(null);
   const gridRef                       = useRef(null);
@@ -444,6 +504,12 @@ export default function AgendaView({ planning, rdvParJourCalcule, agendaRdvs, se
           <div style={{ fontSize:12, color:"#8A93A0", marginTop:2 }}>{rangeDates}</div>
         </div>
         <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
+          <button
+            onClick={()=>{ setShowExportPanel(s=>!s); setExportStatut(null); setExportErreurs([]); }}
+            disabled={totalRdvPlanifies === 0}
+            style={{ fontFamily:"'Oswald',sans-serif", textTransform:"uppercase", fontSize:11, padding:"7px 12px", borderRadius:6, border:"1.5px solid", borderColor: exportStatut==="ok" ? "#5B8C6E" : "#185FA5", background: exportStatut==="ok" ? "#DCEAE0" : "#E6F1FB", color: exportStatut==="ok" ? "#27500A" : "#0C447C", cursor:"pointer", display:"flex", alignItems:"center", gap:5, opacity: totalRdvPlanifies===0 ? 0.4 : 1 }}>
+            <Send size={12}/>{exportStatut==="ok" ? "Envoyé ✓" : `Envoyer planning (${totalRdvPlanifies})`}
+          </button>
           <button onClick={()=>setShowConfig(s=>!s)} style={{ fontFamily:"'Oswald',sans-serif", textTransform:"uppercase", fontSize:11, padding:"7px 12px", borderRadius:6, border:"1.5px solid", borderColor:googleEvents.length>0?"#5B8C6E":"#DCD7CB", background:googleEvents.length>0?"#DCEAE0":"white", color:googleEvents.length>0?"#5B8C6E":"#8A93A0", cursor:"pointer", display:"flex", alignItems:"center", gap:5 }}>
             <Calendar size={13}/>{googleEvents.length>0?`Google (${googleEvents.length})` :"Importer .ics"}
           </button>
@@ -452,6 +518,50 @@ export default function AgendaView({ planning, rdvParJourCalcule, agendaRdvs, se
           <button onClick={()=>setSemaineOffset(s=>s+1)} style={{ padding:"7px 10px", borderRadius:6, border:"1.5px solid #DCD7CB", background:"white", cursor:"pointer" }}><ChevronRight size={16}/></button>
         </div>
       </div>
+
+      {/* Panneau export vers Google Agenda */}
+      {showExportPanel && (
+        <div style={{ background:"white", border:"1.5px solid #185FA5", borderRadius:10, padding:16, marginBottom:16 }}>
+          <div style={{ fontFamily:"'Oswald',sans-serif", textTransform:"uppercase", fontSize:13, color:"#0C447C", marginBottom:10, display:"flex", alignItems:"center", gap:7 }}>
+            <Send size={14}/> Envoyer le planning vers Google Agenda
+          </div>
+          <p style={{ fontSize:12.5, color:"#8A93A0", marginBottom:12, lineHeight:1.6 }}>
+            Envoie <strong style={{color:"#1C2630"}}>{totalRdvPlanifies} visites planifiées</strong> (toutes semaines) vers ton Google Agenda.
+            Chaque visite apparaîtra avec l'adresse, le téléphone et le ciblage en description.
+          </p>
+          {exportStatut === "en_cours" && (
+            <div style={{ marginBottom:12 }}>
+              <div style={{ fontSize:12.5, color:"#8A93A0", marginBottom:6 }}>
+                Envoi en cours... {exportProgress.fait}/{exportProgress.total}
+              </div>
+              <div style={{ height:6, background:"#DCD7CB", borderRadius:99, overflow:"hidden" }}>
+                <div style={{ height:"100%", background:"#185FA5", borderRadius:99, transition:"width 0.3s", width: exportProgress.total ? `${100*exportProgress.fait/exportProgress.total}%` : "0%" }}/>
+              </div>
+            </div>
+          )}
+          {exportStatut === "ok" && (
+            <div style={{ fontSize:12.5, color:"#27500A", background:"#DCEAE0", borderRadius:7, padding:"8px 11px", marginBottom:10, display:"flex", alignItems:"center", gap:6 }}>
+              <CheckCircle2 size={13}/> {exportProgress.total - exportErreurs.length} visite{exportProgress.total - exportErreurs.length > 1 ? "s" : ""} ajoutée{exportProgress.total - exportErreurs.length > 1 ? "s" : ""} à Google Agenda
+              {exportErreurs.length > 0 && <span style={{color:"#C75450", marginLeft:8}}> · {exportErreurs.length} erreur{exportErreurs.length>1?"s":""}</span>}
+            </div>
+          )}
+          {exportStatut === "erreur" && exportErreurs.length > 0 && (
+            <div style={{ fontSize:12, color:"#8A3530", background:"#FCEEED", borderRadius:7, padding:"8px 11px", marginBottom:10 }}>
+              {exportErreurs[0]}
+            </div>
+          )}
+          <div style={{ display:"flex", gap:8 }}>
+            <button onClick={()=>setShowExportPanel(false)} style={{ fontFamily:"'Oswald',sans-serif", textTransform:"uppercase", fontSize:12, padding:"9px 14px", borderRadius:6, border:"1.5px solid #DCD7CB", background:"white", color:"#8A93A0", cursor:"pointer" }}>Fermer</button>
+            <button
+              onClick={exporterVersGoogleAgenda}
+              disabled={exportStatut === "en_cours"}
+              style={{ fontFamily:"'Oswald',sans-serif", textTransform:"uppercase", fontSize:12, padding:"9px 14px", borderRadius:6, border:"none", background: exportStatut==="en_cours" ? "#DCD7CB" : "#185FA5", color:"white", cursor: exportStatut==="en_cours" ? "not-allowed" : "pointer", display:"flex", alignItems:"center", gap:6, flex:1, justifyContent:"center" }}>
+              <Send size={13}/>
+              {!isReady ? "Connecter Google Agenda" : exportStatut==="en_cours" ? `Envoi ${exportProgress.fait}/${exportProgress.total}...` : "Envoyer vers Google Agenda"}
+            </button>
+          </div>
+        </div>
+      )}
 
       {showConfig && <PanneauGoogle googleEvents={googleEvents} onImport={importerEvents} onClear={effacerEvents}/>}
 
