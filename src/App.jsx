@@ -1149,6 +1149,7 @@ function App({ code, onDeconnecter }) {
             agendaRdvs={donnees.agendaRdvs || []}
             setAgendaRdvs={setAgendaRdvs}
             codeSync={code}
+            clients={clients}
           />
         )}
       </div>
