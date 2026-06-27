@@ -814,8 +814,8 @@ export default function AgendaView({ planning, rdvParJourCalcule, agendaRdvs, se
     const rect  = colEl.getBoundingClientRect();
     const relY  = clientY - rect.top + colEl.scrollTop;
     const minBrut = (relY / HAUTEUR_HEURE) * 60 + HEURES_DEBUT * 60;
-    const min   = Math.round(minBrut / 15) * 15;
-    const clamped = Math.max(HEURES_DEBUT * 60, Math.min(HEURES_FIN * 60 - 15, min));
+    const min   = Math.round(minBrut / 30) * 30;
+    const clamped = Math.max(HEURES_DEBUT * 60, Math.min(HEURES_FIN * 60 - 30, min));
     return { colIdx, min: clamped };
   }
 
@@ -892,6 +892,7 @@ export default function AgendaView({ planning, rdvParJourCalcule, agendaRdvs, se
   }, []);
 
   const heures = Array.from({length:HEURES_FIN-HEURES_DEBUT},(_,i)=>HEURES_DEBUT+i);
+  const demiHeures = Array.from({length:(HEURES_FIN-HEURES_DEBUT)*2},(_,i)=>HEURES_DEBUT*60+i*30);
 
   return (
     <div style={{ fontFamily:"'Inter',system-ui,sans-serif", color:"#1C2630", userSelect: dragInfo ? "none" : "auto" }}>
@@ -976,11 +977,18 @@ export default function AgendaView({ planning, rdvParJourCalcule, agendaRdvs, se
           <div style={{ display:"grid", gridTemplateColumns:`44px repeat(5,1fr)` }}>
             {/* Heures */}
             <div style={{ borderRight:"1px solid #DCD7CB" }}>
-              {heures.map(h=>(
-                <div key={h} style={{ height:HAUTEUR_HEURE, borderBottom:"1px solid #F0EDE7", display:"flex", alignItems:"flex-start", padding:"3px 4px 0" }}>
-                  <span style={{ fontSize:10, color:"#8A93A0", marginTop:-6 }}>{h}h</span>
-                </div>
-              ))}
+              {demiHeures.map(dmin=>{
+                const h = Math.floor(dmin/60);
+                const m = dmin%60;
+                return (
+                  <div key={dmin} style={{ height:HAUTEUR_HEURE/2, borderBottom: m===0 ? "1px solid #F0EDE7" : "1px dashed #F5F2EC", display:"flex", alignItems:"flex-start", padding:"2px 4px 0" }}>
+                    {m===0
+                      ? <span style={{ fontSize:10, color:"#8A93A0", marginTop:-5 }}>{h}h</span>
+                      : <span style={{ fontSize:9, color:"#C8C3BA", marginTop:-4 }}>30</span>
+                    }
+                  </div>
+                );
+              })}
             </div>
 
             {/* Colonnes jours */}
@@ -993,12 +1001,20 @@ export default function AgendaView({ planning, rdvParJourCalcule, agendaRdvs, se
                 <div
                   key={colIdx}
                   ref={el => colRefs.current[colIdx] = el}
-                  style={{ position:"relative", borderRight:colIdx<4?"1px solid #DCD7CB":"none", height:HAUTEUR_HEURE*heures.length }}
+                  style={{ position:"relative", borderRight:colIdx<4?"1px solid #DCD7CB":"none", height:HAUTEUR_HEURE*(HEURES_FIN-HEURES_DEBUT) }}
                 >
-                  {heures.map(h=>(
-                    <div key={h} style={{ position:"absolute", left:0, right:0, top:(h-HEURES_DEBUT)*HAUTEUR_HEURE, height:HAUTEUR_HEURE, borderBottom:"1px solid #F0EDE7", cursor:"pointer" }}
-                      onClick={()=>setModalRdv({ rdv:{ jour:dateKey, debut:`${String(h).padStart(2,"0")}:00`, fin:`${String(h+1).padStart(2,"0")}:00`, type:"rdv" }, isTournee:false })}/>
-                  ))}
+                  {demiHeures.map(dmin=>{
+                    const h = Math.floor(dmin/60);
+                    const m = dmin%60;
+                    const topPx = (dmin - HEURES_DEBUT*60)/60*HAUTEUR_HEURE;
+                    const debutStr = `${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}`;
+                    const finMin = dmin + 30;
+                    const finStr = `${String(Math.floor(finMin/60)).padStart(2,"0")}:${String(finMin%60).padStart(2,"0")}`;
+                    return (
+                      <div key={dmin} style={{ position:"absolute", left:0, right:0, top:topPx, height:HAUTEUR_HEURE/2, borderBottom: m===0 ? "1px solid #F0EDE7" : "1px dashed #F5F2EC", cursor:"pointer" }}
+                        onClick={()=>setModalRdv({ rdv:{ jour:dateKey, debut:debutStr, fin:finStr, type:"rdv" }, isTournee:false })}/>
+                    );
+                  })}
 
                   {preview && (
                     <div className="agenda-drop-preview" style={{
