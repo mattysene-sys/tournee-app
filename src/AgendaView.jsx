@@ -261,6 +261,219 @@ function PanneauGoogle({ googleEvents, onImport, onClear }) {
   );
 }
 
+// ─── Panneau Export vers Google Agenda ───────────────────────────────────────
+function PanneauExport({ rdvParJourCalcule, agendaRdvs, totalRdvPlanifies, isReady, gcalLoading, authorize, createEvent, onClose }) {
+  const [recherche, setRecherche] = useState("");
+  const [selectionIds, setSelectionIds] = useState(new Set()); // Set de "clientId|dateKey"
+  const [statut, setStatut] = useState(null); // null | 'en_cours' | 'ok' | 'erreur'
+  const [progress, setProgress] = useState({ fait: 0, total: 0 });
+  const [erreurs, setErreurs] = useState([]);
+
+  // Construire la liste de tous les RDV planifiés
+  const tousRdvs = [];
+  Object.entries(rdvParJourCalcule).forEach(([dateKey, items]) => {
+    items.forEach(item => {
+      const override = (agendaRdvs || []).find(r => r.overrideTournee === item.client.id && r.jour === dateKey);
+      tousRdvs.push({
+        key: `${item.client.id}|${dateKey}`,
+        client: item.client,
+        date: dateKey,
+        debut: override ? override.debut : minToHHMM(item.heureArrivee),
+        fin:   override ? override.fin   : minToHHMM(item.fin),
+        duree: override
+          ? (timeToMin(override.fin) - timeToMin(override.debut))
+          : (item.client.dureeDefaut || 20),
+      });
+    });
+  });
+
+  // Filtrer par recherche
+  const rdvsFiltres = recherche.trim().length >= 1
+    ? tousRdvs.filter(r =>
+        r.client.etablissement.toLowerCase().includes(recherche.toLowerCase()) ||
+        (r.client.ville || "").toLowerCase().includes(recherche.toLowerCase())
+      )
+    : tousRdvs;
+
+  function toggleSelection(key) {
+    setSelectionIds(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
+  function toutSelectionner() {
+    setSelectionIds(new Set(rdvsFiltres.map(r => r.key)));
+  }
+
+  function toutDeselectionner() {
+    setSelectionIds(new Set());
+  }
+
+  async function envoyer() {
+    const aEnvoyer = tousRdvs.filter(r => selectionIds.has(r.key));
+    if (aEnvoyer.length === 0) return;
+
+    if (!isReady) {
+      await authorize();
+      return;
+    }
+
+    setStatut("en_cours");
+    setProgress({ fait: 0, total: aEnvoyer.length });
+    setErreurs([]);
+
+    const errs = [];
+    for (let i = 0; i < aEnvoyer.length; i++) {
+      const r = aEnvoyer[i];
+      try {
+        await createEvent({ pharmacie: r.client, date: r.date, heure: r.debut, duree: r.duree });
+      } catch (err) {
+        errs.push(`${r.client.etablissement} : ${err.message}`);
+      }
+      setProgress({ fait: i + 1, total: aEnvoyer.length });
+      await new Promise(res => setTimeout(res, 200));
+    }
+    setErreurs(errs);
+    setStatut(errs.length === aEnvoyer.length ? "erreur" : "ok");
+  }
+
+  const nbSelectionnes = selectionIds.size;
+  const inp = { width:"100%", padding:"9px 34px 9px 11px", border:"1.5px solid #DCD7CB", borderRadius:6, fontSize:14, fontFamily:"inherit", color:"#1C2630", background:"#F5F2EC", boxSizing:"border-box" };
+  const btnBase = { fontFamily:"'Oswald',sans-serif", textTransform:"uppercase", letterSpacing:"0.04em", fontSize:12, padding:"8px 13px", borderRadius:6, cursor:"pointer", display:"inline-flex", alignItems:"center", gap:5, border:"none" };
+
+  return (
+    <div style={{ background:"white", border:"1.5px solid #185FA5", borderRadius:10, padding:16, marginBottom:16 }}>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
+        <div style={{ fontFamily:"'Oswald',sans-serif", textTransform:"uppercase", fontSize:13, color:"#0C447C", display:"flex", alignItems:"center", gap:7 }}>
+          <Send size={14}/> Envoyer vers Google Agenda
+        </div>
+        <button onClick={onClose} style={{ background:"none", border:"none", cursor:"pointer", color:"#8A93A0" }}><X size={16}/></button>
+      </div>
+
+      {/* Barre de recherche */}
+      <div style={{ position:"relative", marginBottom:10 }}>
+        <input
+          style={inp}
+          placeholder="Rechercher un client ou une ville..."
+          value={recherche}
+          onChange={e => setRecherche(e.target.value)}
+          autoFocus
+        />
+        {recherche && (
+          <button onClick={()=>setRecherche("")} style={{ position:"absolute", right:8, top:"50%", transform:"translateY(-50%)", background:"none", border:"none", cursor:"pointer", color:"#8A93A0", padding:0 }}>
+            <X size={14}/>
+          </button>
+        )}
+      </div>
+
+      {/* Actions de sélection */}
+      <div style={{ display:"flex", gap:6, marginBottom:10, alignItems:"center", flexWrap:"wrap" }}>
+        <button onClick={toutSelectionner} style={{ ...btnBase, background:"#F5F2EC", color:"#1C2630", border:"1px solid #DCD7CB" }}>
+          Tout sélectionner ({rdvsFiltres.length})
+        </button>
+        {nbSelectionnes > 0 && (
+          <button onClick={toutDeselectionner} style={{ ...btnBase, background:"transparent", color:"#8A93A0", border:"1px solid #DCD7CB" }}>
+            Tout désélectionner
+          </button>
+        )}
+        {nbSelectionnes > 0 && (
+          <span style={{ fontSize:12, color:"#185FA5", fontWeight:600, marginLeft:"auto" }}>
+            {nbSelectionnes} sélectionné{nbSelectionnes > 1 ? "s" : ""}
+          </span>
+        )}
+      </div>
+
+      {/* Liste des RDV */}
+      <div style={{ maxHeight:280, overflowY:"auto", border:"1px solid #DCD7CB", borderRadius:8, marginBottom:12 }}>
+        {rdvsFiltres.length === 0 && (
+          <div style={{ padding:16, textAlign:"center", color:"#8A93A0", fontSize:13 }}>
+            Aucun résultat
+          </div>
+        )}
+        {rdvsFiltres.map((r, i) => {
+          const selected = selectionIds.has(r.key);
+          const dateAff = new Date(r.date + "T00:00:00").toLocaleDateString("fr-FR", { weekday:"short", day:"numeric", month:"short" });
+          return (
+            <div
+              key={r.key}
+              onClick={() => toggleSelection(r.key)}
+              style={{
+                display:"flex", alignItems:"center", gap:10, padding:"9px 12px",
+                borderBottom: i < rdvsFiltres.length - 1 ? "1px solid #F0EDE7" : "none",
+                cursor:"pointer",
+                background: selected ? "#EEF4FB" : "white",
+                transition:"background 0.1s",
+              }}
+            >
+              {/* Checkbox */}
+              <div style={{
+                width:18, height:18, borderRadius:4, border:"1.5px solid",
+                borderColor: selected ? "#185FA5" : "#DCD7CB",
+                background: selected ? "#185FA5" : "white",
+                display:"flex", alignItems:"center", justifyContent:"center",
+                flexShrink:0, transition:"all 0.15s",
+              }}>
+                {selected && <CheckCircle2 size={12} color="white" strokeWidth={3}/>}
+              </div>
+              {/* Infos */}
+              <div style={{ flex:1, minWidth:0 }}>
+                <div style={{ fontSize:13, fontWeight:600, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis", color:"#1C2630" }}>
+                  {r.client.etablissement}
+                </div>
+                <div style={{ fontSize:11, color:"#8A93A0" }}>
+                  {dateAff} · {r.debut.replace(":"," h ").replace(/^0/,"")} – {r.fin.replace(":"," h ").replace(/^0/,"")} · {r.client.ville}
+                </div>
+              </div>
+              {r.client.ciblage && (
+                <span style={{ fontSize:10, fontFamily:"'Oswald',sans-serif", textTransform:"uppercase", padding:"2px 7px", borderRadius:999, background:"#F5F2EC", color:"#8A93A0", flexShrink:0 }}>
+                  {r.client.ciblage}
+                </span>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Barre de progression */}
+      {statut === "en_cours" && (
+        <div style={{ marginBottom:12 }}>
+          <div style={{ fontSize:12, color:"#8A93A0", marginBottom:5 }}>Envoi en cours... {progress.fait}/{progress.total}</div>
+          <div style={{ height:5, background:"#DCD7CB", borderRadius:99, overflow:"hidden" }}>
+            <div style={{ height:"100%", background:"#185FA5", borderRadius:99, transition:"width 0.3s", width: progress.total ? `${100*progress.fait/progress.total}%` : "0%" }}/>
+          </div>
+        </div>
+      )}
+      {statut === "ok" && (
+        <div style={{ fontSize:12.5, color:"#27500A", background:"#DCEAE0", borderRadius:7, padding:"8px 11px", marginBottom:10, display:"flex", alignItems:"center", gap:6 }}>
+          <CheckCircle2 size={13}/> {progress.total - erreurs.length} visite{progress.total - erreurs.length > 1 ? "s" : ""} ajoutée{progress.total - erreurs.length > 1 ? "s" : ""} à Google Agenda
+          {erreurs.length > 0 && <span style={{color:"#C75450", marginLeft:8}}>· {erreurs.length} erreur{erreurs.length>1?"s":""}</span>}
+        </div>
+      )}
+      {statut === "erreur" && erreurs.length > 0 && (
+        <div style={{ fontSize:12, color:"#8A3530", background:"#FCEEED", borderRadius:7, padding:"8px 11px", marginBottom:10 }}>{erreurs[0]}</div>
+      )}
+
+      {/* Bouton envoyer */}
+      <button
+        onClick={envoyer}
+        disabled={nbSelectionnes === 0 || statut === "en_cours"}
+        style={{ ...btnBase, background: nbSelectionnes === 0 || statut === "en_cours" ? "#DCD7CB" : "#185FA5", color: nbSelectionnes === 0 || statut === "en_cours" ? "#8A93A0" : "white", width:"100%", justifyContent:"center", padding:"11px", fontSize:13 }}>
+        <Send size={14}/>
+        {!isReady
+          ? "Connecter Google Agenda"
+          : statut === "en_cours"
+          ? `Envoi ${progress.fait}/${progress.total}...`
+          : nbSelectionnes === 0
+          ? "Sélectionne des visites ci-dessus"
+          : `Envoyer ${nbSelectionnes} visite${nbSelectionnes > 1 ? "s" : ""} vers Google Agenda`}
+      </button>
+    </div>
+  );
+}
+
 // ─── Composant principal ──────────────────────────────────────────────────────
 export default function AgendaView({ planning, rdvParJourCalcule, agendaRdvs, setAgendaRdvs }) {
   const [semaineOffset, setSemaineOffset] = useState(0);
@@ -521,46 +734,16 @@ export default function AgendaView({ planning, rdvParJourCalcule, agendaRdvs, se
 
       {/* Panneau export vers Google Agenda */}
       {showExportPanel && (
-        <div style={{ background:"white", border:"1.5px solid #185FA5", borderRadius:10, padding:16, marginBottom:16 }}>
-          <div style={{ fontFamily:"'Oswald',sans-serif", textTransform:"uppercase", fontSize:13, color:"#0C447C", marginBottom:10, display:"flex", alignItems:"center", gap:7 }}>
-            <Send size={14}/> Envoyer le planning vers Google Agenda
-          </div>
-          <p style={{ fontSize:12.5, color:"#8A93A0", marginBottom:12, lineHeight:1.6 }}>
-            Envoie <strong style={{color:"#1C2630"}}>{totalRdvPlanifies} visites planifiées</strong> (toutes semaines) vers ton Google Agenda.
-            Chaque visite apparaîtra avec l'adresse, le téléphone et le ciblage en description.
-          </p>
-          {exportStatut === "en_cours" && (
-            <div style={{ marginBottom:12 }}>
-              <div style={{ fontSize:12.5, color:"#8A93A0", marginBottom:6 }}>
-                Envoi en cours... {exportProgress.fait}/{exportProgress.total}
-              </div>
-              <div style={{ height:6, background:"#DCD7CB", borderRadius:99, overflow:"hidden" }}>
-                <div style={{ height:"100%", background:"#185FA5", borderRadius:99, transition:"width 0.3s", width: exportProgress.total ? `${100*exportProgress.fait/exportProgress.total}%` : "0%" }}/>
-              </div>
-            </div>
-          )}
-          {exportStatut === "ok" && (
-            <div style={{ fontSize:12.5, color:"#27500A", background:"#DCEAE0", borderRadius:7, padding:"8px 11px", marginBottom:10, display:"flex", alignItems:"center", gap:6 }}>
-              <CheckCircle2 size={13}/> {exportProgress.total - exportErreurs.length} visite{exportProgress.total - exportErreurs.length > 1 ? "s" : ""} ajoutée{exportProgress.total - exportErreurs.length > 1 ? "s" : ""} à Google Agenda
-              {exportErreurs.length > 0 && <span style={{color:"#C75450", marginLeft:8}}> · {exportErreurs.length} erreur{exportErreurs.length>1?"s":""}</span>}
-            </div>
-          )}
-          {exportStatut === "erreur" && exportErreurs.length > 0 && (
-            <div style={{ fontSize:12, color:"#8A3530", background:"#FCEEED", borderRadius:7, padding:"8px 11px", marginBottom:10 }}>
-              {exportErreurs[0]}
-            </div>
-          )}
-          <div style={{ display:"flex", gap:8 }}>
-            <button onClick={()=>setShowExportPanel(false)} style={{ fontFamily:"'Oswald',sans-serif", textTransform:"uppercase", fontSize:12, padding:"9px 14px", borderRadius:6, border:"1.5px solid #DCD7CB", background:"white", color:"#8A93A0", cursor:"pointer" }}>Fermer</button>
-            <button
-              onClick={exporterVersGoogleAgenda}
-              disabled={exportStatut === "en_cours"}
-              style={{ fontFamily:"'Oswald',sans-serif", textTransform:"uppercase", fontSize:12, padding:"9px 14px", borderRadius:6, border:"none", background: exportStatut==="en_cours" ? "#DCD7CB" : "#185FA5", color:"white", cursor: exportStatut==="en_cours" ? "not-allowed" : "pointer", display:"flex", alignItems:"center", gap:6, flex:1, justifyContent:"center" }}>
-              <Send size={13}/>
-              {!isReady ? "Connecter Google Agenda" : exportStatut==="en_cours" ? `Envoi ${exportProgress.fait}/${exportProgress.total}...` : "Envoyer vers Google Agenda"}
-            </button>
-          </div>
-        </div>
+        <PanneauExport
+          rdvParJourCalcule={rdvParJourCalcule}
+          agendaRdvs={agendaRdvs}
+          totalRdvPlanifies={totalRdvPlanifies}
+          isReady={isReady}
+          gcalLoading={gcalLoading}
+          authorize={authorize}
+          createEvent={createEvent}
+          onClose={()=>setShowExportPanel(false)}
+        />
       )}
 
       {showConfig && <PanneauGoogle googleEvents={googleEvents} onImport={importerEvents} onClear={effacerEvents}/>}
