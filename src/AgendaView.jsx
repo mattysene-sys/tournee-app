@@ -153,6 +153,21 @@ function minToHHMM(min) {
   return `${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}`;
 }
 
+// Convertit heureArrivee+fin en debut/fin avec durée minimum 30 min
+function rdvDebutFin(heureArriveeMin, finMin) {
+  const debut = snapDemiHeure(heureArriveeMin);
+  const dureeReelle = finMin - heureArriveeMin;
+  // Durée minimum 30 min, arrondie au multiple de 30 supérieur
+  const dureeSnap = Math.max(30, Math.ceil(dureeReelle / 30) * 30);
+  const fin = debut + dureeSnap;
+  const toHHMM = (m) => {
+    const h = Math.floor(m / 60) % 24;
+    const mn = m % 60;
+    return `${String(h).padStart(2,"0")}:${String(mn).padStart(2,"0")}`;
+  };
+  return { debut: toHHMM(debut), fin: toHHMM(fin) };
+}
+
 function minToAff(min) {
   const h = Math.floor(min / 60) % 24;
   const m = Math.round(min % 60);
@@ -502,15 +517,16 @@ function PanneauExport({ rdvParJourCalcule, agendaRdvs, totalRdvPlanifies, isRea
   Object.entries(rdvParJourCalcule).forEach(([dateKey, items]) => {
     items.forEach(item => {
       const override = (agendaRdvs || []).find(r => r.overrideTournee === item.client.id && r.jour === dateKey);
+      const bf = override ? null : rdvDebutFin(item.heureArrivee, item.fin);
       tousRdvs.push({
         key: `${item.client.id}|${dateKey}`,
         client: item.client,
         date: dateKey,
-        debut: override ? override.debut : minToHHMM(item.heureArrivee),
-        fin:   override ? override.fin   : minToHHMM(item.fin),
+        debut: override ? override.debut : bf.debut,
+        fin:   override ? override.fin   : bf.fin,
         duree: override
           ? (timeToMin(override.fin) - timeToMin(override.debut))
-          : (item.client.dureeDefaut || 20),
+          : Math.max(30, Math.ceil((item.client.dureeDefaut || 20) / 30) * 30),
       });
     });
   });
@@ -735,14 +751,15 @@ export default function AgendaView({ planning, rdvParJourCalcule, agendaRdvs, se
     Object.entries(rdvParJourCalcule).forEach(([dateKey, items]) => {
       items.forEach(item => {
         const override = (agendaRdvs || []).find(r => r.overrideTournee === item.client.id && r.jour === dateKey);
+        const bf = override ? null : rdvDebutFin(item.heureArrivee, item.fin);
         rdvsAExporter.push({
           client: item.client,
           date: dateKey,
-          debut: override ? override.debut : minToHHMM(item.heureArrivee),
-          fin:   override ? override.fin   : minToHHMM(item.fin),
+          debut: override ? override.debut : bf.debut,
+          fin:   override ? override.fin   : bf.fin,
           duree: override
             ? (timeToMin(override.fin) - timeToMin(override.debut))
-            : (item.client.dureeDefaut || 20),
+            : Math.max(30, Math.ceil((item.client.dureeDefaut || 20) / 30) * 30),
         });
       });
     });
@@ -779,8 +796,10 @@ export default function AgendaView({ planning, rdvParJourCalcule, agendaRdvs, se
     setExportStatut(erreurs.length === rdvsAExporter.length ? "erreur" : "ok");
   }
 
-  // Compter les RDV planifiés (toutes semaines)
+  // Compter les RDV planifiés (toutes semaines) — depuis le planning complet
   const totalRdvPlanifies = Object.values(rdvParJourCalcule).reduce((acc, items) => acc + items.length, 0);
+  // Note: rdvParJourCalcule ne contient que les clients avec coordonnées GPS
+  // Les clients sans coords ne sont pas exportables vers Google Agenda
 
   const [dragInfo, setDragInfo]       = useState(null);
   const [dropPreview, setDropPreview] = useState(null);
@@ -810,8 +829,8 @@ export default function AgendaView({ planning, rdvParJourCalcule, agendaRdvs, se
         id: "t-" + clientId, clientId,
         titre: item.client.etablissement,
         type: "tournee", jour: dateKey,
-        debut: override ? override.debut : minToHHMM(item.heureArrivee),
-        fin:   override ? override.fin   : minToHHMM(item.fin),
+        debut: override ? override.debut : rdvDebutFin(item.heureArrivee, item.fin).debut,
+        fin:   override ? override.fin   : rdvDebutFin(item.heureArrivee, item.fin).fin,
         isTournee: true,
       };
     });
