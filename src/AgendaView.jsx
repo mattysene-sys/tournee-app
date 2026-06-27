@@ -12,7 +12,13 @@ const TYPE_COLORS = {
   rdv:     { bg: "#FAECE7", border: "#993C1D", text: "#712B13" },
 };
 
-function dateToKey(d) { return d.toISOString().slice(0, 10); }
+// ✅ CORRECTION FUSEAU : utilise l'heure locale, pas UTC
+function dateToKey(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const j = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${j}`;
+}
 
 function getLundi(offset = 0) {
   const now = new Date();
@@ -74,7 +80,7 @@ function ModalRdv({ rdv, onSave, onDelete, onClose, isTournee }) {
       <div style={{ background:"white", borderRadius:12, padding:22, maxWidth:380, width:"100%" }} onClick={e=>e.stopPropagation()}>
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
           <span style={{ fontFamily:"'Oswald',sans-serif", textTransform:"uppercase", fontSize:13, color:"#8A93A0" }}>
-            {isTournee ? "Repositionner la visite" : rdv?.id ? "Modifier le RDV" : "Nouveau RDV"}
+            {isTournee ? "Repositionner la visite" : rdv?.id ? "Modifier" : "Nouveau RDV"}
           </span>
           <button onClick={onClose} style={{ background:"none", border:"none", cursor:"pointer", color:"#8A93A0" }}><X size={18}/></button>
         </div>
@@ -167,19 +173,45 @@ function PanneauGoogle({ googleEvents, onImport, onClear }) {
         const summary = get("SUMMARY") || "RDV";
         const dtstart = get("DTSTART"), dtend = get("DTEND");
         if (!dtstart) continue;
+
+        // ✅ CORRECTION FUSEAU : parse en heure locale, pas UTC
         function parseDate(s) {
           const clean = s.replace(/[^0-9T]/g,"");
-          if (clean.length===8) return new Date(parseInt(clean.slice(0,4)),parseInt(clean.slice(4,6))-1,parseInt(clean.slice(6,8)));
-          const y=parseInt(clean.slice(0,4)),mo=parseInt(clean.slice(4,6))-1,d=parseInt(clean.slice(6,8));
-          const h=parseInt(clean.slice(9,11)||"0"),mi=parseInt(clean.slice(11,13)||"0");
-          return new Date(Date.UTC(y,mo,d,h,mi));
+          const isAllDay = !s.includes("T");
+          const y  = parseInt(clean.slice(0,4));
+          const mo = parseInt(clean.slice(4,6)) - 1;
+          const d  = parseInt(clean.slice(6,8));
+          if (isAllDay) return { date: new Date(y, mo, d), isAllDay: true };
+          const h  = parseInt(clean.slice(9,11) || "0");
+          const mi = parseInt(clean.slice(11,13) || "0");
+          // Si UTC (se termine par Z), convertir en local
+          const isUTC = s.endsWith("Z");
+          const date = isUTC ? new Date(Date.UTC(y,mo,d,h,mi)) : new Date(y,mo,d,h,mi);
+          return { date, isAllDay: false };
         }
-        const start=parseDate(dtstart), end=dtend?parseDate(dtend):null;
-        const isAllDay=!dtstart.includes("T");
-        const jour=start.toISOString().slice(0,10);
-        const dh=isAllDay?8:start.getHours(), dm=isAllDay?0:start.getMinutes();
-        const fh=end?(isAllDay?18:end.getHours()):dh+1, fm=end?(isAllDay?0:end.getMinutes()):dm;
-        events.push({ id:"gc-"+uid(), titre:summary, type:"google", jour, debut:`${String(dh).padStart(2,"0")}:${String(dm).padStart(2,"0")}`, fin:`${String(Math.min(fh,19)).padStart(2,"0")}:${String(fm).padStart(2,"0")}`, readOnly:true });
+
+        const { date: start, isAllDay } = parseDate(dtstart);
+        const endParsed = dtend ? parseDate(dtend) : null;
+        const end = endParsed?.date || null;
+
+        // ✅ Utilise heure locale pour construire la clé de jour
+        const jourDate = new Date(start);
+        const jour = dateToKey(jourDate);
+
+        const dh = isAllDay ? 8  : start.getHours();
+        const dm = isAllDay ? 0  : start.getMinutes();
+        const fh = end ? (isAllDay ? 18 : end.getHours())   : dh + 1;
+        const fm = end ? (isAllDay ? 0  : end.getMinutes()) : dm;
+
+        events.push({
+          id: "gc-" + uid(),
+          titre: summary,
+          type: "google",
+          jour,
+          debut: `${String(dh).padStart(2,"0")}:${String(dm).padStart(2,"0")}`,
+          fin:   `${String(Math.min(fh,19)).padStart(2,"0")}:${String(fm).padStart(2,"0")}`,
+          readOnly: true,
+        });
       } catch { continue; }
     }
     return events;
@@ -235,11 +267,10 @@ export default function AgendaView({ planning, rdvParJourCalcule, agendaRdvs, se
   const [googleEvents, setGoogleEvents]   = useState(() => { try { return JSON.parse(localStorage.getItem("tournee_google_events") || "[]"); } catch { return []; } });
   const [showConfig, setShowConfig]       = useState(false);
 
-  // ── Drag & drop state ──
-  const [dragInfo, setDragInfo]       = useState(null);   // { rdv, isTournee, offsetMin }
-  const [dropPreview, setDropPreview] = useState(null);   // { jour, debut, fin }
+  const [dragInfo, setDragInfo]       = useState(null);
+  const [dropPreview, setDropPreview] = useState(null);
   const gridRef                       = useRef(null);
-  const colRefs                       = useRef([]);        // refs des 5 colonnes
+  const colRefs                       = useRef([]);
 
   const lundi  = getLundi(semaineOffset);
   const jours  = Array.from({length:5},(_,i)=>{ const d=new Date(lundi); d.setDate(lundi.getDate()+i); return d; });
@@ -256,7 +287,6 @@ export default function AgendaView({ planning, rdvParJourCalcule, agendaRdvs, se
     try { localStorage.removeItem("tournee_google_events"); } catch {}
   }
 
-  // ── Données ──
   function getRdvTournee(dateKey) {
     return (rdvParJourCalcule[dateKey] || []).map(item => {
       const clientId = item.client.id;
@@ -301,14 +331,12 @@ export default function AgendaView({ planning, rdvParJourCalcule, agendaRdvs, se
     setModalRdv(null);
   }
 
-  // ── Drag & drop ──
   function getPosFromEvent(e) {
     const touch = e.touches ? e.touches[0] : e;
     return { x: touch.clientX, y: touch.clientY };
   }
 
   function posToJourMin(clientX, clientY) {
-    // Trouver la colonne
     let colIdx = -1;
     for (let i = 0; i < colRefs.current.length; i++) {
       const el = colRefs.current[i];
@@ -317,12 +345,10 @@ export default function AgendaView({ planning, rdvParJourCalcule, agendaRdvs, se
       if (clientX >= rect.left && clientX <= rect.right) { colIdx = i; break; }
     }
     if (colIdx === -1) return null;
-
     const colEl = colRefs.current[colIdx];
     const rect  = colEl.getBoundingClientRect();
     const relY  = clientY - rect.top + colEl.scrollTop;
     const minBrut = (relY / HAUTEUR_HEURE) * 60 + HEURES_DEBUT * 60;
-    // Snap à 15 min
     const min   = Math.round(minBrut / 15) * 15;
     const clamped = Math.max(HEURES_DEBUT * 60, Math.min(HEURES_FIN * 60 - 15, min));
     return { colIdx, min: clamped };
@@ -331,16 +357,12 @@ export default function AgendaView({ planning, rdvParJourCalcule, agendaRdvs, se
   const handleDragStart = useCallback((e, rdv, isTournee) => {
     if (rdv.type === "google") return;
     e.stopPropagation();
-
     const { y } = getPosFromEvent(e);
     const el = e.currentTarget;
     const rect = el.getBoundingClientRect();
     const offsetPx = y - rect.top;
     const offsetMin = Math.round((offsetPx / HAUTEUR_HEURE) * 60);
-
     setDragInfo({ rdv, isTournee, offsetMin });
-
-    // Style fantôme drag natif
     if (e.dataTransfer) {
       e.dataTransfer.effectAllowed = "move";
       try {
@@ -361,12 +383,10 @@ export default function AgendaView({ planning, rdvParJourCalcule, agendaRdvs, se
     const { x, y } = getPosFromEvent(e);
     const pos = posToJourMin(x, y);
     if (!pos) return;
-
     const { colIdx, min } = pos;
     const dureeMin = timeToMin(dragInfo.rdv.fin) - timeToMin(dragInfo.rdv.debut);
     const debutSnap = Math.max(HEURES_DEBUT*60, min - dragInfo.offsetMin);
     const finSnap   = debutSnap + dureeMin;
-
     setDropPreview({
       jour:  dateToKey(jours[colIdx]),
       debut: minToHHMM(debutSnap),
@@ -377,7 +397,6 @@ export default function AgendaView({ planning, rdvParJourCalcule, agendaRdvs, se
   const handleDrop = useCallback((e) => {
     e.preventDefault();
     if (!dragInfo || !dropPreview) { setDragInfo(null); setDropPreview(null); return; }
-
     const { rdv, isTournee } = dragInfo;
     const updated = {
       id:    rdv.id.startsWith("t-") ? uid() : rdv.id,
@@ -389,18 +408,15 @@ export default function AgendaView({ planning, rdvParJourCalcule, agendaRdvs, se
       readOnly: false,
       overrideTournee: isTournee ? rdv.clientId : undefined,
     };
-
     setAgendaRdvs(prev => {
       let filtered = (prev||[]);
       if (isTournee) {
-        // Supprimer l'ancien override (peut être sur un autre jour)
         filtered = filtered.filter(r => r.overrideTournee !== rdv.clientId);
       } else {
         filtered = filtered.filter(r => r.id !== rdv.id);
       }
       return [...filtered, updated];
     });
-
     setDragInfo(null);
     setDropPreview(null);
   }, [dragInfo, dropPreview, setAgendaRdvs]);
@@ -494,13 +510,11 @@ export default function AgendaView({ planning, rdvParJourCalcule, agendaRdvs, se
                   ref={el => colRefs.current[colIdx] = el}
                   style={{ position:"relative", borderRight:colIdx<4?"1px solid #DCD7CB":"none", height:HAUTEUR_HEURE*heures.length }}
                 >
-                  {/* Zones cliquables pour nouveau RDV */}
                   {heures.map(h=>(
                     <div key={h} style={{ position:"absolute", left:0, right:0, top:(h-HEURES_DEBUT)*HAUTEUR_HEURE, height:HAUTEUR_HEURE, borderBottom:"1px solid #F0EDE7", cursor:"pointer" }}
                       onClick={()=>setModalRdv({ rdv:{ jour:dateKey, debut:`${String(h).padStart(2,"0")}:00`, fin:`${String(h+1).padStart(2,"0")}:00`, type:"rdv" }, isTournee:false })}/>
                   ))}
 
-                  {/* Preview de drop */}
                   {preview && (
                     <div className="agenda-drop-preview" style={{
                       top: (timeToMin(preview.debut) - HEURES_DEBUT*60)/60*HAUTEUR_HEURE,
@@ -512,7 +526,6 @@ export default function AgendaView({ planning, rdvParJourCalcule, agendaRdvs, se
                     </div>
                   )}
 
-                  {/* Événements */}
                   {rdvs.map(rdv=>{
                     const startMin = timeToMin(rdv.debut);
                     const endMin   = timeToMin(rdv.fin);
@@ -574,7 +587,6 @@ export default function AgendaView({ planning, rdvParJourCalcule, agendaRdvs, se
         <Plus size={22}/>
       </button>
 
-      {/* Modal */}
       {modalRdv && (
         <ModalRdv
           rdv={modalRdv.rdv}
