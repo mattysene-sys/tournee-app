@@ -3,7 +3,7 @@ import { ChevronLeft, ChevronRight, Plus, X, Calendar, RefreshCw, CheckCircle2, 
 
 const HEURES_DEBUT = 8;
 const HEURES_FIN = 19;
-const HAUTEUR_HEURE = 56;
+const HAUTEUR_HEURE = 72;
 const JOURS_SEMAINE = ["Lun", "Mar", "Mer", "Jeu", "Ven"];
 
 const TYPE_COLORS = {
@@ -487,7 +487,7 @@ export default function AgendaView({ planning, rdvParJourCalcule, agendaRdvs, se
         </div>
 
         {/* Corps */}
-        <div style={{ overflowY:"auto", maxHeight:520 }}>
+        <div style={{ overflowY:"auto", maxHeight:700 }}>
           <div style={{ display:"grid", gridTemplateColumns:`44px repeat(5,1fr)` }}>
             {/* Heures */}
             <div style={{ borderRight:"1px solid #DCD7CB" }}>
