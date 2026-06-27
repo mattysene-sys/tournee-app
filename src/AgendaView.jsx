@@ -65,20 +65,53 @@ function isToday(d) {
 function uid() { return Math.random().toString(36).slice(2,10); }
 
 // ─── Modal ───────────────────────────────────────────────────────────────────
-function ModalRdv({ rdv, onSave, onDelete, onClose, isTournee }) {
-  const [titre, setTitre] = useState(rdv?.titre || "");
-  const [type,  setType]  = useState(rdv?.type  || "rdv");
-  const [jour,  setJour]  = useState(rdv?.jour  || "");
-  const [debut, setDebut] = useState(rdv?.debut || "09:00");
-  const [fin,   setFin]   = useState(rdv?.fin   || "09:30");
+function ModalRdv({ rdv, onSave, onDelete, onClose, isTournee, clients = [] }) {
+  const [titre,         setTitre]         = useState(rdv?.titre || "");
+  const [type,          setType]          = useState(rdv?.type  || "rdv");
+  const [jour,          setJour]          = useState(rdv?.jour  || "");
+  const [debut,         setDebut]         = useState(rdv?.debut || "09:00");
+  const [fin,           setFin]           = useState(rdv?.fin   || "09:30");
+  const [rechercheClient, setRechercheClient] = useState("");
+  const [clientChoisi,  setClientChoisi]  = useState(null); // client sélectionné depuis la base
+  const [showSuggestions, setShowSuggestions] = useState(false);
 
   const lbl = { display:"block", fontSize:11, textTransform:"uppercase", letterSpacing:"0.06em", color:"#8A93A0", marginBottom:5, fontWeight:600 };
   const inp = { width:"100%", padding:"9px 11px", border:"1.5px solid #DCD7CB", borderRadius:6, fontSize:14, fontFamily:"inherit", color:"#1C2630", background:"#F5F2EC", boxSizing:"border-box" };
   const btn = { fontFamily:"'Oswald',sans-serif", textTransform:"uppercase", letterSpacing:"0.04em", fontSize:13, padding:"10px 16px", borderRadius:6, cursor:"pointer", display:"inline-flex", alignItems:"center", justifyContent:"center", gap:6 };
 
+  // Suggestions filtrées depuis la base clients
+  const suggestions = rechercheClient.trim().length >= 2
+    ? clients.filter(c =>
+        c.etablissement.toLowerCase().includes(rechercheClient.toLowerCase()) ||
+        (c.ville || "").toLowerCase().includes(rechercheClient.toLowerCase())
+      ).slice(0, 6)
+    : [];
+
+  function choisirClient(client) {
+    setClientChoisi(client);
+    setTitre(client.etablissement);
+    setRechercheClient(client.etablissement);
+    setShowSuggestions(false);
+    setType("tournee"); // une visite client = type visite
+  }
+
+  function effacerClient() {
+    setClientChoisi(null);
+    setTitre("");
+    setRechercheClient("");
+    setType("rdv");
+  }
+
+  const titreEffectif = isTournee ? rdv.titre : titre.trim();
+  const peutSauvegarder = titreEffectif && jour;
+
+  const PRESSION_COLOR = { Rouge: "#C75450", Orange: "#E8714A", Vert: "#5B8C6E" };
+
   return (
     <div style={{ position:"fixed", inset:0, background:"rgba(28,38,48,0.55)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:200, padding:20 }} onClick={onClose}>
-      <div style={{ background:"white", borderRadius:12, padding:22, maxWidth:380, width:"100%" }} onClick={e=>e.stopPropagation()}>
+      <div style={{ background:"white", borderRadius:12, padding:22, maxWidth:420, width:"100%", maxHeight:"90vh", overflowY:"auto" }} onClick={e=>e.stopPropagation()}>
+
+        {/* En-tête */}
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
           <span style={{ fontFamily:"'Oswald',sans-serif", textTransform:"uppercase", fontSize:13, color:"#8A93A0" }}>
             {isTournee ? "Repositionner la visite" : rdv?.id ? "Modifier" : "Nouveau RDV"}
@@ -86,6 +119,7 @@ function ModalRdv({ rdv, onSave, onDelete, onClose, isTournee }) {
           <button onClick={onClose} style={{ background:"none", border:"none", cursor:"pointer", color:"#8A93A0" }}><X size={18}/></button>
         </div>
 
+        {/* Visite Tournée repositionnée */}
         {isTournee && (
           <div style={{ background:"#E6F1FB", border:"1px solid #185FA5", borderRadius:8, padding:"8px 11px", marginBottom:12, fontSize:12.5, color:"#0C447C" }}>
             <strong>{rdv.titre}</strong><br/>
@@ -93,14 +127,77 @@ function ModalRdv({ rdv, onSave, onDelete, onClose, isTournee }) {
           </div>
         )}
 
+        {/* Recherche client depuis la base */}
         {!isTournee && (
           <div style={{ marginBottom:12 }}>
-            <label style={lbl}>Titre</label>
-            <input style={inp} value={titre} onChange={e=>setTitre(e.target.value)} placeholder="Ex: Réunion IBSA" autoFocus/>
+            <label style={lbl}>Client (base pharmacies)</label>
+            <div style={{ position:"relative" }}>
+              {clientChoisi ? (
+                /* Client sélectionné — fiche résumée */
+                <div style={{ display:"flex", alignItems:"center", gap:10, padding:"9px 11px", background:"#E6F1FB", border:"1.5px solid #185FA5", borderRadius:6 }}>
+                  <span style={{ width:8, height:8, borderRadius:"50%", background: PRESSION_COLOR[clientChoisi.pression] || "#DCD7CB", flexShrink:0 }}/>
+                  <div style={{ flex:1, minWidth:0 }}>
+                    <div style={{ fontWeight:600, fontSize:13, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{clientChoisi.etablissement}</div>
+                    <div style={{ fontSize:11, color:"#8A93A0" }}>{clientChoisi.ville}{clientChoisi.ciblage ? ` · ${clientChoisi.ciblage}` : ""}{clientChoisi.tel1 ? ` · ${clientChoisi.tel1}` : ""}</div>
+                  </div>
+                  <button onClick={effacerClient} style={{ background:"none", border:"none", cursor:"pointer", color:"#8A93A0", padding:0, flexShrink:0 }}><X size={14}/></button>
+                </div>
+              ) : (
+                <>
+                  <input
+                    style={{ ...inp, paddingRight:32 }}
+                    placeholder="Tape le nom d'une pharmacie ou d'une ville..."
+                    value={rechercheClient}
+                    onChange={e => { setRechercheClient(e.target.value); setTitre(e.target.value); setShowSuggestions(true); }}
+                    onFocus={() => setShowSuggestions(true)}
+                    autoFocus
+                  />
+                  {rechercheClient && (
+                    <button onClick={effacerClient} style={{ position:"absolute", right:8, top:"50%", transform:"translateY(-50%)", background:"none", border:"none", cursor:"pointer", color:"#8A93A0", padding:0 }}>
+                      <X size={14}/>
+                    </button>
+                  )}
+                  {/* Liste de suggestions */}
+                  {showSuggestions && suggestions.length > 0 && (
+                    <div style={{ position:"absolute", top:"calc(100% + 4px)", left:0, right:0, background:"white", border:"1.5px solid #DCD7CB", borderRadius:8, boxShadow:"0 8px 24px rgba(0,0,0,0.12)", zIndex:300, overflow:"hidden" }}>
+                      {suggestions.map(c => (
+                        <div
+                          key={c.id}
+                          onClick={() => choisirClient(c)}
+                          style={{ display:"flex", alignItems:"center", gap:9, padding:"9px 12px", cursor:"pointer", borderBottom:"1px solid #F0EDE7" }}
+                          onMouseEnter={e => e.currentTarget.style.background="#F5F2EC"}
+                          onMouseLeave={e => e.currentTarget.style.background="white"}
+                        >
+                          <span style={{ width:8, height:8, borderRadius:"50%", background: PRESSION_COLOR[c.pression] || "#DCD7CB", flexShrink:0 }}/>
+                          <div style={{ flex:1, minWidth:0 }}>
+                            <div style={{ fontWeight:600, fontSize:13, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{c.etablissement}</div>
+                            <div style={{ fontSize:11, color:"#8A93A0" }}>{c.ville}{c.ciblage ? ` · ${c.ciblage}` : ""}</div>
+                          </div>
+                          {c.tel1 && <span style={{ fontSize:11, color:"#8A93A0", flexShrink:0 }}>{c.tel1}</span>}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {showSuggestions && rechercheClient.trim().length >= 2 && suggestions.length === 0 && (
+                    <div style={{ position:"absolute", top:"calc(100% + 4px)", left:0, right:0, background:"white", border:"1.5px solid #DCD7CB", borderRadius:8, padding:"10px 12px", fontSize:12.5, color:"#8A93A0", zIndex:300 }}>
+                      Aucun client trouvé — tu peux quand même saisir un titre libre ci-dessous
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+            {/* Titre libre si pas de client sélectionné */}
+            {!clientChoisi && (
+              <div style={{ marginTop:10 }}>
+                <label style={lbl}>Ou titre libre</label>
+                <input style={inp} value={titre} onChange={e=>setTitre(e.target.value)} placeholder="Ex: Réunion IBSA, Formation..."/>
+              </div>
+            )}
           </div>
         )}
 
-        {!isTournee && (
+        {/* Type — seulement si pas de client pharmacie sélectionné */}
+        {!isTournee && !clientChoisi && (
           <div style={{ marginBottom:12 }}>
             <label style={lbl}>Type</label>
             <div style={{ display:"flex", gap:6 }}>
@@ -111,11 +208,13 @@ function ModalRdv({ rdv, onSave, onDelete, onClose, isTournee }) {
           </div>
         )}
 
+        {/* Jour */}
         <div style={{ marginBottom:12 }}>
           <label style={lbl}>Jour {isTournee && <span style={{fontWeight:400,textTransform:"none",fontSize:10}}>(peut changer de semaine)</span>}</label>
           <input type="date" style={inp} value={jour} onChange={e=>setJour(e.target.value)}/>
         </div>
 
+        {/* Heures */}
         <div style={{ display:"flex", gap:10, marginBottom:18 }}>
           <div style={{ flex:1 }}>
             <label style={lbl}>Début</label>
@@ -127,6 +226,7 @@ function ModalRdv({ rdv, onSave, onDelete, onClose, isTournee }) {
           </div>
         </div>
 
+        {/* Boutons */}
         <div style={{ display:"flex", gap:8 }}>
           {rdv?.id && (
             <button onClick={()=>onDelete(rdv.id, rdv)} style={{ ...btn, background:"transparent", border:"1.5px solid #C75450", color:"#C75450", padding:"10px 12px" }}>
@@ -136,20 +236,20 @@ function ModalRdv({ rdv, onSave, onDelete, onClose, isTournee }) {
           <button onClick={onClose} style={{ ...btn, flex:1, background:"transparent", border:"1.5px solid #DCD7CB", color:"#8A93A0" }}>Annuler</button>
           <button
             onClick={()=>{
-              const titreEffectif = isTournee ? rdv.titre : titre.trim();
-              if (titreEffectif && jour) {
+              if (peutSauvegarder) {
                 onSave({
                   id: rdv?.id || uid(),
                   titre: titreEffectif,
-                  type: isTournee ? "tournee" : type,
+                  type: isTournee ? "tournee" : (clientChoisi ? "tournee" : type),
                   jour, debut, fin,
                   readOnly: false,
                   overrideTournee: isTournee ? rdv.clientId : undefined,
+                  clientId: clientChoisi ? clientChoisi.id : undefined,
                 });
               }
             }}
-            style={{ ...btn, flex:1, background:"#E8714A", color:"white", border:"none" }}
-            disabled={(!isTournee && !titre.trim()) || !jour}
+            style={{ ...btn, flex:2, background: peutSauvegarder ? "#E8714A" : "#DCD7CB", color: peutSauvegarder ? "white" : "#8A93A0", border:"none", cursor: peutSauvegarder ? "pointer" : "not-allowed" }}
+            disabled={!peutSauvegarder}
           >
             Enregistrer
           </button>
@@ -475,7 +575,7 @@ function PanneauExport({ rdvParJourCalcule, agendaRdvs, totalRdvPlanifies, isRea
 }
 
 // ─── Composant principal ──────────────────────────────────────────────────────
-export default function AgendaView({ planning, rdvParJourCalcule, agendaRdvs, setAgendaRdvs }) {
+export default function AgendaView({ planning, rdvParJourCalcule, agendaRdvs, setAgendaRdvs, clients = [] }) {
   const [semaineOffset, setSemaineOffset] = useState(0);
   const [modalRdv, setModalRdv]           = useState(null);
   const [googleEvents, setGoogleEvents]   = useState(() => { try { return JSON.parse(localStorage.getItem("tournee_google_events") || "[]"); } catch { return []; } });
@@ -887,6 +987,7 @@ export default function AgendaView({ planning, rdvParJourCalcule, agendaRdvs, se
           onSave={sauvegarderRdv}
           onDelete={supprimerRdv}
           onClose={()=>setModalRdv(null)}
+          clients={clients}
         />
       )}
     </div>
