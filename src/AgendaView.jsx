@@ -1,6 +1,98 @@
 import React, { useState, useRef, useCallback } from "react";
 import { ChevronLeft, ChevronRight, Plus, X, Calendar, RefreshCw, CheckCircle2, Clock, Send } from "lucide-react";
-import { useGoogleCalendar } from "../hooks/useGoogleCalendar";
+
+// ─── Hook Google Calendar (intégré) ──────────────────────────────────────────
+const CLIENT_ID = '185834811620-ai8nof64ohu3792boete33h42i4skr3a.apps.googleusercontent.com';
+const SCOPES = 'https://www.googleapis.com/auth/calendar.events';
+
+let _gcalTokenClient = null;
+let _gcalAccessToken = null;
+
+function useGoogleCalendar() {
+  const [isReady, setIsReady] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState(null);
+
+  const loadGoogleScript = useCallback(() => {
+    return new Promise((resolve) => {
+      if (window.google?.accounts) { resolve(); return; }
+      const script = document.createElement('script');
+      script.src = 'https://accounts.google.com/gsi/client';
+      script.onload = resolve;
+      document.body.appendChild(script);
+    });
+  }, []);
+
+  const authorize = useCallback(async () => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      await loadGoogleScript();
+      await new Promise((resolve, reject) => {
+        _gcalTokenClient = window.google.accounts.oauth2.initTokenClient({
+          client_id: CLIENT_ID,
+          scope: SCOPES,
+          callback: (response) => {
+            if (response.error) { reject(new Error(response.error)); }
+            else { _gcalAccessToken = response.access_token; setIsReady(true); resolve(); }
+          },
+        });
+        _gcalTokenClient.requestAccessToken({ prompt: 'consent' });
+      });
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [loadGoogleScript]);
+
+  const createEvent = useCallback(async ({ pharmacie, date, heure = '09:00', duree = 30, notes = '' }) => {
+    if (!_gcalAccessToken) throw new Error('Non autorisé. Clique sur "Connecter Google Agenda" d'abord.');
+    const [annee, mois, jour] = date.split('-');
+    const [h, m] = heure.split(':');
+    const debut = new Date(annee, mois - 1, jour, h, m);
+    const fin = new Date(debut.getTime() + duree * 60000);
+    const pad = (n) => String(n).padStart(2, '0');
+    const toISO = (d) => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:00`;
+    const getCouleur = (ciblage) => {
+      if (!ciblage) return '1';
+      const c = ciblage.toUpperCase();
+      if (c.includes('COMPTE CLE') || c.includes('PLATINIUM')) return '11';
+      if (c.includes('GOLD')) return '5';
+      if (c.includes('SILVER')) return '7';
+      return '1';
+    };
+    const event = {
+      summary: `Visite ${pharmacie.etablissement || pharmacie.nom}`,
+      location: [pharmacie.adresse, pharmacie.ville, pharmacie.cp].filter(Boolean).join(', '),
+      description: [
+        pharmacie.contact ? `Contact : ${pharmacie.contact}` : '',
+        pharmacie.tel1   ? `Tél : ${pharmacie.tel1}` : '',
+        pharmacie.email  ? `Email : ${pharmacie.email}` : '',
+        pharmacie.ciblage    ? `Ciblage : ${pharmacie.ciblage}` : '',
+        pharmacie.groupement ? `Groupement : ${pharmacie.groupement}` : '',
+        notes ? `Notes : ${notes}` : '',
+      ].filter(Boolean).join('\n'),
+      start: { dateTime: toISO(debut), timeZone: 'Europe/Paris' },
+      end:   { dateTime: toISO(fin),   timeZone: 'Europe/Paris' },
+      colorId: getCouleur(pharmacie.ciblage),
+    };
+    const response = await fetch('https://www.googleapis.com/calendar/v3/calendars/primary/events', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${_gcalAccessToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(event),
+    });
+    if (!response.ok) {
+      const err = await response.json();
+      if (err.error?.code === 401) { _gcalAccessToken = null; setIsReady(false); throw new Error('Session expirée. Reconnecte Google Agenda.'); }
+      throw new Error(err.error?.message || 'Erreur API Google Calendar');
+    }
+    return await response.json();
+  }, []);
+
+  return { isReady, isLoading, error, authorize, createEvent };
+}
+
 
 const HEURES_DEBUT = 8;
 const HEURES_FIN = 19;
