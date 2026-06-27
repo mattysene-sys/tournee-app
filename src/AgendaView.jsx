@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useRef, useCallback } from "react";
 import { ChevronLeft, ChevronRight, Plus, X, Calendar, RefreshCw, CheckCircle2, Clock } from "lucide-react";
 
 const HEURES_DEBUT = 8;
@@ -12,9 +12,7 @@ const TYPE_COLORS = {
   rdv:     { bg: "#FAECE7", border: "#993C1D", text: "#712B13" },
 };
 
-function dateToKey(d) {
-  return d.toISOString().slice(0, 10);
-}
+function dateToKey(d) { return d.toISOString().slice(0, 10); }
 
 function getLundi(offset = 0) {
   const now = new Date();
@@ -59,26 +57,24 @@ function isToday(d) {
 
 function uid() { return Math.random().toString(36).slice(2,10); }
 
-// ─── Modal création / édition ────────────────────────────────────────────────
+// ─── Modal ───────────────────────────────────────────────────────────────────
 function ModalRdv({ rdv, onSave, onDelete, onClose, isTournee }) {
   const [titre, setTitre] = useState(rdv?.titre || "");
-  const [type, setType]   = useState(rdv?.type  || "rdv");
-  const [jour, setJour]   = useState(rdv?.jour  || "");
+  const [type,  setType]  = useState(rdv?.type  || "rdv");
+  const [jour,  setJour]  = useState(rdv?.jour  || "");
   const [debut, setDebut] = useState(rdv?.debut || "09:00");
-  const [fin, setFin]     = useState(rdv?.fin   || "09:30");
+  const [fin,   setFin]   = useState(rdv?.fin   || "09:30");
 
   const lbl = { display:"block", fontSize:11, textTransform:"uppercase", letterSpacing:"0.06em", color:"#8A93A0", marginBottom:5, fontWeight:600 };
   const inp = { width:"100%", padding:"9px 11px", border:"1.5px solid #DCD7CB", borderRadius:6, fontSize:14, fontFamily:"inherit", color:"#1C2630", background:"#F5F2EC", boxSizing:"border-box" };
   const btn = { fontFamily:"'Oswald',sans-serif", textTransform:"uppercase", letterSpacing:"0.04em", fontSize:13, padding:"10px 16px", borderRadius:6, cursor:"pointer", display:"inline-flex", alignItems:"center", justifyContent:"center", gap:6 };
-
-  const titreBloque = isTournee; // On ne peut pas renommer une visite Tournée
 
   return (
     <div style={{ position:"fixed", inset:0, background:"rgba(28,38,48,0.55)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:200, padding:20 }} onClick={onClose}>
       <div style={{ background:"white", borderRadius:12, padding:22, maxWidth:380, width:"100%" }} onClick={e=>e.stopPropagation()}>
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
           <span style={{ fontFamily:"'Oswald',sans-serif", textTransform:"uppercase", fontSize:13, color:"#8A93A0" }}>
-            {isTournee ? "Repositionner la visite" : rdv?.id ? "Modifier" : "Nouveau RDV"}
+            {isTournee ? "Repositionner la visite" : rdv?.id ? "Modifier le RDV" : "Nouveau RDV"}
           </span>
           <button onClick={onClose} style={{ background:"none", border:"none", cursor:"pointer", color:"#8A93A0" }}><X size={18}/></button>
         </div>
@@ -86,11 +82,11 @@ function ModalRdv({ rdv, onSave, onDelete, onClose, isTournee }) {
         {isTournee && (
           <div style={{ background:"#E6F1FB", border:"1px solid #185FA5", borderRadius:8, padding:"8px 11px", marginBottom:12, fontSize:12.5, color:"#0C447C" }}>
             <strong>{rdv.titre}</strong><br/>
-            <span style={{ opacity:0.8 }}>Visite Tournée — seule l'heure est modifiable</span>
+            <span style={{ opacity:0.8 }}>Visite Tournée — titre non modifiable</span>
           </div>
         )}
 
-        {!titreBloque && (
+        {!isTournee && (
           <div style={{ marginBottom:12 }}>
             <label style={lbl}>Titre</label>
             <input style={inp} value={titre} onChange={e=>setTitre(e.target.value)} placeholder="Ex: Réunion IBSA" autoFocus/>
@@ -109,14 +105,14 @@ function ModalRdv({ rdv, onSave, onDelete, onClose, isTournee }) {
         )}
 
         <div style={{ marginBottom:12 }}>
-          <label style={lbl}>Jour</label>
-          <input type="date" style={inp} value={jour} onChange={e=>setJour(e.target.value)} readOnly={isTournee}/>
+          <label style={lbl}>Jour {isTournee && <span style={{fontWeight:400,textTransform:"none",fontSize:10}}>(peut changer de semaine)</span>}</label>
+          <input type="date" style={inp} value={jour} onChange={e=>setJour(e.target.value)}/>
         </div>
 
         <div style={{ display:"flex", gap:10, marginBottom:18 }}>
           <div style={{ flex:1 }}>
             <label style={lbl}>Début</label>
-            <input type="time" style={inp} value={debut} onChange={e=>setDebut(e.target.value)} autoFocus={isTournee}/>
+            <input type="time" style={inp} value={debut} onChange={e=>setDebut(e.target.value)}/>
           </div>
           <div style={{ flex:1 }}>
             <label style={lbl}>Fin</label>
@@ -126,7 +122,7 @@ function ModalRdv({ rdv, onSave, onDelete, onClose, isTournee }) {
 
         <div style={{ display:"flex", gap:8 }}>
           {rdv?.id && (
-            <button onClick={()=>onDelete(rdv.id)} style={{ ...btn, background:"transparent", border:"1.5px solid #C75450", color:"#C75450", padding:"10px 12px" }}>
+            <button onClick={()=>onDelete(rdv.id, rdv)} style={{ ...btn, background:"transparent", border:"1.5px solid #C75450", color:"#C75450", padding:"10px 12px" }}>
               <X size={14}/>
             </button>
           )}
@@ -135,7 +131,14 @@ function ModalRdv({ rdv, onSave, onDelete, onClose, isTournee }) {
             onClick={()=>{
               const titreEffectif = isTournee ? rdv.titre : titre.trim();
               if (titreEffectif && jour) {
-                onSave({ id: rdv?.id || uid(), titre: titreEffectif, type: isTournee ? "tournee" : type, jour, debut, fin, readOnly: false, overrideTournee: isTournee ? rdv.clientId : undefined });
+                onSave({
+                  id: rdv?.id || uid(),
+                  titre: titreEffectif,
+                  type: isTournee ? "tournee" : type,
+                  jour, debut, fin,
+                  readOnly: false,
+                  overrideTournee: isTournee ? rdv.clientId : undefined,
+                });
               }
             }}
             style={{ ...btn, flex:1, background:"#E8714A", color:"white", border:"none" }}
@@ -149,7 +152,7 @@ function ModalRdv({ rdv, onSave, onDelete, onClose, isTournee }) {
   );
 }
 
-// ─── Panneau import .ics ─────────────────────────────────────────────────────
+// ─── Panneau Google ───────────────────────────────────────────────────────────
 function PanneauGoogle({ googleEvents, onImport, onClear }) {
   const fileRef = React.useRef(null);
   const btn = { fontFamily:"'Oswald',sans-serif", textTransform:"uppercase", fontSize:12, padding:"9px 14px", borderRadius:6, cursor:"pointer", display:"inline-flex", alignItems:"center", gap:6, border:"none" };
@@ -162,8 +165,7 @@ function PanneauGoogle({ googleEvents, onImport, onClear }) {
       try {
         const get = (key) => { const m = block.match(new RegExp(`${key}[^:]*:([^\r\n]+)`)); return m ? m[1].trim() : null; };
         const summary = get("SUMMARY") || "RDV";
-        const dtstart = get("DTSTART");
-        const dtend   = get("DTEND");
+        const dtstart = get("DTSTART"), dtend = get("DTEND");
         if (!dtstart) continue;
         function parseDate(s) {
           const clean = s.replace(/[^0-9T]/g,"");
@@ -177,9 +179,7 @@ function PanneauGoogle({ googleEvents, onImport, onClear }) {
         const jour=start.toISOString().slice(0,10);
         const dh=isAllDay?8:start.getHours(), dm=isAllDay?0:start.getMinutes();
         const fh=end?(isAllDay?18:end.getHours()):dh+1, fm=end?(isAllDay?0:end.getMinutes()):dm;
-        const debut=`${String(dh).padStart(2,"0")}:${String(dm).padStart(2,"0")}`;
-        const fin=`${String(Math.min(fh,19)).padStart(2,"0")}:${String(fm).padStart(2,"0")}`;
-        events.push({ id:"gc-"+uid(), titre:summary, type:"google", jour, debut, fin, readOnly:true });
+        events.push({ id:"gc-"+uid(), titre:summary, type:"google", jour, debut:`${String(dh).padStart(2,"0")}:${String(dm).padStart(2,"0")}`, fin:`${String(Math.min(fh,19)).padStart(2,"0")}:${String(fm).padStart(2,"0")}`, readOnly:true });
       } catch { continue; }
     }
     return events;
@@ -228,68 +228,62 @@ function PanneauGoogle({ googleEvents, onImport, onClear }) {
   );
 }
 
-// ─── Composant principal ─────────────────────────────────────────────────────
+// ─── Composant principal ──────────────────────────────────────────────────────
 export default function AgendaView({ planning, rdvParJourCalcule, agendaRdvs, setAgendaRdvs }) {
   const [semaineOffset, setSemaineOffset] = useState(0);
-  const [modalRdv, setModalRdv]           = useState(null); // { rdv, isTournee }
+  const [modalRdv, setModalRdv]           = useState(null);
   const [googleEvents, setGoogleEvents]   = useState(() => { try { return JSON.parse(localStorage.getItem("tournee_google_events") || "[]"); } catch { return []; } });
   const [showConfig, setShowConfig]       = useState(false);
 
-  function importerEvents(events) {
-    setGoogleEvents(events);
-    try { localStorage.setItem("tournee_google_events", JSON.stringify(events)); } catch {}
-    setShowConfig(false);
-  }
-
-  function effacerEvents() {
-    setGoogleEvents([]);
-    try { localStorage.removeItem("tournee_google_events"); } catch {}
-  }
+  // ── Drag & drop state ──
+  const [dragInfo, setDragInfo]       = useState(null);   // { rdv, isTournee, offsetMin }
+  const [dropPreview, setDropPreview] = useState(null);   // { jour, debut, fin }
+  const gridRef                       = useRef(null);
+  const colRefs                       = useRef([]);        // refs des 5 colonnes
 
   const lundi  = getLundi(semaineOffset);
   const jours  = Array.from({length:5},(_,i)=>{ const d=new Date(lundi); d.setDate(lundi.getDate()+i); return d; });
   const numSem = getNumSemaine(lundi);
   const rangeDates = `${lundi.getDate()} – ${jours[4].getDate()} ${lundi.toLocaleString("fr-FR",{month:"long"})} ${lundi.getFullYear()}`;
 
-  // Construit les visites Tournée pour un jour
-  // On applique les overrides d'heure stockés dans agendaRdvs (overrideTournee)
+  function importerEvents(events) {
+    setGoogleEvents(events);
+    try { localStorage.setItem("tournee_google_events", JSON.stringify(events)); } catch {}
+    setShowConfig(false);
+  }
+  function effacerEvents() {
+    setGoogleEvents([]);
+    try { localStorage.removeItem("tournee_google_events"); } catch {}
+  }
+
+  // ── Données ──
   function getRdvTournee(dateKey) {
     return (rdvParJourCalcule[dateKey] || []).map(item => {
       const clientId = item.client.id;
-      // Cherche un override d'heure pour cette visite
       const override = (agendaRdvs || []).find(r => r.overrideTournee === clientId && r.jour === dateKey);
       return {
-        id:       "t-" + clientId,
-        clientId,
-        titre:    item.client.etablissement,
-        type:     "tournee",
-        jour:     dateKey,
-        debut:    override ? override.debut : minToHHMM(item.heureArrivee),
-        fin:      override ? override.fin   : minToHHMM(item.fin),
-        readOnly: false, // on rend cliquable
+        id: "t-" + clientId, clientId,
+        titre: item.client.etablissement,
+        type: "tournee", jour: dateKey,
+        debut: override ? override.debut : minToHHMM(item.heureArrivee),
+        fin:   override ? override.fin   : minToHHMM(item.fin),
         isTournee: true,
       };
     });
   }
 
   function tousLesRdv(dateKey) {
-    const tournee = getRdvTournee(dateKey);
-    // Rdvs perso (sans les overrides qui sont masqués derrière les visites Tournée)
-    const rdvsPerso = (agendaRdvs || []).filter(e => e.jour === dateKey && !e.overrideTournee);
     return [
-      ...tournee,
+      ...getRdvTournee(dateKey),
       ...googleEvents.filter(e => e.jour === dateKey),
-      ...rdvsPerso,
+      ...(agendaRdvs || []).filter(e => e.jour === dateKey && !e.overrideTournee),
     ];
   }
 
   function sauvegarderRdv(rdv) {
     setAgendaRdvs(prev => {
       const filtered = (prev || []).filter(r => {
-        if (rdv.overrideTournee) {
-          // Remplacer l'ancien override pour ce client+jour
-          return !(r.overrideTournee === rdv.overrideTournee && r.jour === rdv.jour);
-        }
+        if (rdv.overrideTournee) return !(r.overrideTournee === rdv.overrideTournee && r.jour === rdv.jour);
         return r.id !== rdv.id;
       });
       return [...filtered, rdv];
@@ -297,26 +291,137 @@ export default function AgendaView({ planning, rdvParJourCalcule, agendaRdvs, se
     setModalRdv(null);
   }
 
-  function supprimerRdv(id) {
-    // Si c'est un override Tournée (id commence par "t-"), on supprime l'override
+  function supprimerRdv(id, rdv) {
     if (id.startsWith("t-")) {
-      const clientId = id.replace("t-", "");
-      setAgendaRdvs(prev => (prev || []).filter(r => !(r.overrideTournee === clientId)));
+      const clientId = id.replace("t-","");
+      setAgendaRdvs(prev => (prev||[]).filter(r => !(r.overrideTournee === clientId)));
     } else {
-      setAgendaRdvs(prev => (prev || []).filter(r => r.id !== id));
+      setAgendaRdvs(prev => (prev||[]).filter(r => r.id !== id));
     }
     setModalRdv(null);
   }
 
-  function ouvrirModal(rdv, isTournee = false) {
-    setModalRdv({ rdv, isTournee });
+  // ── Drag & drop ──
+  function getPosFromEvent(e) {
+    const touch = e.touches ? e.touches[0] : e;
+    return { x: touch.clientX, y: touch.clientY };
   }
+
+  function posToJourMin(clientX, clientY) {
+    // Trouver la colonne
+    let colIdx = -1;
+    for (let i = 0; i < colRefs.current.length; i++) {
+      const el = colRefs.current[i];
+      if (!el) continue;
+      const rect = el.getBoundingClientRect();
+      if (clientX >= rect.left && clientX <= rect.right) { colIdx = i; break; }
+    }
+    if (colIdx === -1) return null;
+
+    const colEl = colRefs.current[colIdx];
+    const rect  = colEl.getBoundingClientRect();
+    const relY  = clientY - rect.top + colEl.scrollTop;
+    const minBrut = (relY / HAUTEUR_HEURE) * 60 + HEURES_DEBUT * 60;
+    // Snap à 15 min
+    const min   = Math.round(minBrut / 15) * 15;
+    const clamped = Math.max(HEURES_DEBUT * 60, Math.min(HEURES_FIN * 60 - 15, min));
+    return { colIdx, min: clamped };
+  }
+
+  const handleDragStart = useCallback((e, rdv, isTournee) => {
+    if (rdv.type === "google") return;
+    e.stopPropagation();
+
+    const { y } = getPosFromEvent(e);
+    const el = e.currentTarget;
+    const rect = el.getBoundingClientRect();
+    const offsetPx = y - rect.top;
+    const offsetMin = Math.round((offsetPx / HAUTEUR_HEURE) * 60);
+
+    setDragInfo({ rdv, isTournee, offsetMin });
+
+    // Style fantôme drag natif
+    if (e.dataTransfer) {
+      e.dataTransfer.effectAllowed = "move";
+      try {
+        const ghost = el.cloneNode(true);
+        ghost.style.opacity = "0.01";
+        ghost.style.position = "fixed";
+        ghost.style.top = "-1000px";
+        document.body.appendChild(ghost);
+        e.dataTransfer.setDragImage(ghost, 0, 0);
+        setTimeout(() => document.body.removeChild(ghost), 0);
+      } catch {}
+    }
+  }, []);
+
+  const handleDragOver = useCallback((e) => {
+    e.preventDefault();
+    if (!dragInfo) return;
+    const { x, y } = getPosFromEvent(e);
+    const pos = posToJourMin(x, y);
+    if (!pos) return;
+
+    const { colIdx, min } = pos;
+    const dureeMin = timeToMin(dragInfo.rdv.fin) - timeToMin(dragInfo.rdv.debut);
+    const debutSnap = Math.max(HEURES_DEBUT*60, min - dragInfo.offsetMin);
+    const finSnap   = debutSnap + dureeMin;
+
+    setDropPreview({
+      jour:  dateToKey(jours[colIdx]),
+      debut: minToHHMM(debutSnap),
+      fin:   minToHHMM(Math.min(finSnap, HEURES_FIN*60)),
+    });
+  }, [dragInfo, jours]);
+
+  const handleDrop = useCallback((e) => {
+    e.preventDefault();
+    if (!dragInfo || !dropPreview) { setDragInfo(null); setDropPreview(null); return; }
+
+    const { rdv, isTournee } = dragInfo;
+    const updated = {
+      id:    rdv.id.startsWith("t-") ? uid() : rdv.id,
+      titre: rdv.titre,
+      type:  rdv.type,
+      jour:  dropPreview.jour,
+      debut: dropPreview.debut,
+      fin:   dropPreview.fin,
+      readOnly: false,
+      overrideTournee: isTournee ? rdv.clientId : undefined,
+    };
+
+    setAgendaRdvs(prev => {
+      let filtered = (prev||[]);
+      if (isTournee) {
+        // Supprimer l'ancien override (peut être sur un autre jour)
+        filtered = filtered.filter(r => r.overrideTournee !== rdv.clientId);
+      } else {
+        filtered = filtered.filter(r => r.id !== rdv.id);
+      }
+      return [...filtered, updated];
+    });
+
+    setDragInfo(null);
+    setDropPreview(null);
+  }, [dragInfo, dropPreview, setAgendaRdvs]);
+
+  const handleDragEnd = useCallback(() => {
+    setDragInfo(null);
+    setDropPreview(null);
+  }, []);
 
   const heures = Array.from({length:HEURES_FIN-HEURES_DEBUT},(_,i)=>HEURES_DEBUT+i);
 
   return (
-    <div style={{ fontFamily:"'Inter',system-ui,sans-serif", color:"#1C2630" }}>
-      {/* En-tête semaine */}
+    <div style={{ fontFamily:"'Inter',system-ui,sans-serif", color:"#1C2630", userSelect: dragInfo ? "none" : "auto" }}>
+      <style>{`
+        .agenda-event-drag { cursor: grab; }
+        .agenda-event-drag:active { cursor: grabbing; opacity: 0.5; }
+        .agenda-drop-preview { position:absolute; left:2px; right:2px; background:rgba(232,113,74,0.18); border:2px dashed #E8714A; border-radius:4px; pointer-events:none; z-index:10; }
+        .agenda-col-dropzone { position:absolute; inset:0; }
+      `}</style>
+
+      {/* En-tête */}
       <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:14, flexWrap:"wrap", gap:10 }}>
         <div>
           <div style={{ fontFamily:"'Oswald',sans-serif", textTransform:"uppercase", fontSize:18, fontWeight:600 }}>Semaine {numSem}</div>
@@ -335,35 +440,40 @@ export default function AgendaView({ planning, rdvParJourCalcule, agendaRdvs, se
       {showConfig && <PanneauGoogle googleEvents={googleEvents} onImport={importerEvents} onClear={effacerEvents}/>}
 
       {/* Légende */}
-      <div style={{ display:"flex", gap:14, marginBottom:12, flexWrap:"wrap" }}>
+      <div style={{ display:"flex", gap:14, marginBottom:12, flexWrap:"wrap", alignItems:"center" }}>
         {[{type:"tournee",label:"Visite Tournée"},{type:"google",label:"Google Agenda"},{type:"rdv",label:"RDV perso"}].map(({type,label})=>(
           <div key={type} style={{ display:"flex", alignItems:"center", gap:6, fontSize:11.5, color:"#8A93A0" }}>
             <div style={{ width:12, height:12, borderRadius:2, background:TYPE_COLORS[type].bg, borderLeft:`3px solid ${TYPE_COLORS[type].border}` }}/>{label}
           </div>
         ))}
-        <div style={{ fontSize:11.5, color:"#8A93A0", marginLeft:"auto", display:"flex", alignItems:"center", gap:4 }}>
-          <Clock size={11}/> Clic sur un événement ou créneau pour modifier
+        <div style={{ fontSize:11, color:"#8A93A0", marginLeft:"auto", display:"flex", alignItems:"center", gap:4, opacity:0.7 }}>
+          <Clock size={11}/> Glisser pour déplacer · Cliquer pour modifier
         </div>
       </div>
 
-      {/* Grille calendrier */}
-      <div style={{ background:"white", border:"1px solid #DCD7CB", borderRadius:10, overflow:"hidden" }}>
-        {/* En-têtes jours */}
+      {/* Grille */}
+      <div
+        ref={gridRef}
+        style={{ background:"white", border:"1px solid #DCD7CB", borderRadius:10, overflow:"hidden" }}
+        onDragOver={handleDragOver}
+        onDrop={handleDrop}
+      >
+        {/* En-têtes colonnes */}
         <div style={{ display:"grid", gridTemplateColumns:`44px repeat(5,1fr)`, borderBottom:"1px solid #DCD7CB" }}>
           <div style={{ borderRight:"1px solid #DCD7CB" }}/>
           {jours.map((jour,i)=>(
             <div key={i} style={{ padding:"8px 4px", textAlign:"center", borderRight:i<4?"1px solid #DCD7CB":"none", cursor:"pointer" }}
-              onClick={()=>ouvrirModal({ jour:dateToKey(jour), debut:"09:00", fin:"09:30", type:"rdv" })}>
+              onClick={()=>setModalRdv({ rdv:{ jour:dateToKey(jour), debut:"09:00", fin:"09:30", type:"rdv" }, isTournee:false })}>
               <div style={{ fontSize:10, color:"#8A93A0", textTransform:"uppercase", letterSpacing:"0.5px", marginBottom:2 }}>{JOURS_SEMAINE[i]}</div>
               <div style={{ fontSize:18, fontFamily:"'Oswald',sans-serif", fontWeight:600, width:30, height:30, borderRadius:"50%", margin:"0 auto", display:"flex", alignItems:"center", justifyContent:"center", background:isToday(jour)?"#E8714A":"transparent", color:isToday(jour)?"white":"#1C2630" }}>{jour.getDate()}</div>
             </div>
           ))}
         </div>
 
-        {/* Corps grille */}
-        <div style={{ overflowY:"auto", maxHeight:500 }}>
+        {/* Corps */}
+        <div style={{ overflowY:"auto", maxHeight:520 }}>
           <div style={{ display:"grid", gridTemplateColumns:`44px repeat(5,1fr)` }}>
-            {/* Colonne heures */}
+            {/* Heures */}
             <div style={{ borderRight:"1px solid #DCD7CB" }}>
               {heures.map(h=>(
                 <div key={h} style={{ height:HAUTEUR_HEURE, borderBottom:"1px solid #F0EDE7", display:"flex", alignItems:"flex-start", padding:"3px 4px 0" }}>
@@ -375,14 +485,32 @@ export default function AgendaView({ planning, rdvParJourCalcule, agendaRdvs, se
             {/* Colonnes jours */}
             {jours.map((jour,colIdx)=>{
               const dateKey = dateToKey(jour);
-              const rdvs = tousLesRdv(dateKey);
+              const rdvs    = tousLesRdv(dateKey);
+              const preview = dropPreview?.jour === dateKey ? dropPreview : null;
+
               return (
-                <div key={colIdx} style={{ position:"relative", borderRight:colIdx<4?"1px solid #DCD7CB":"none", height:HAUTEUR_HEURE*heures.length }}>
-                  {/* Zones cliquables pour créer un RDV */}
+                <div
+                  key={colIdx}
+                  ref={el => colRefs.current[colIdx] = el}
+                  style={{ position:"relative", borderRight:colIdx<4?"1px solid #DCD7CB":"none", height:HAUTEUR_HEURE*heures.length }}
+                >
+                  {/* Zones cliquables pour nouveau RDV */}
                   {heures.map(h=>(
                     <div key={h} style={{ position:"absolute", left:0, right:0, top:(h-HEURES_DEBUT)*HAUTEUR_HEURE, height:HAUTEUR_HEURE, borderBottom:"1px solid #F0EDE7", cursor:"pointer" }}
-                      onClick={()=>ouvrirModal({ jour:dateKey, debut:`${String(h).padStart(2,"0")}:00`, fin:`${String(h+1).padStart(2,"0")}:00`, type:"rdv" })}/>
+                      onClick={()=>setModalRdv({ rdv:{ jour:dateKey, debut:`${String(h).padStart(2,"0")}:00`, fin:`${String(h+1).padStart(2,"0")}:00`, type:"rdv" }, isTournee:false })}/>
                   ))}
+
+                  {/* Preview de drop */}
+                  {preview && (
+                    <div className="agenda-drop-preview" style={{
+                      top: (timeToMin(preview.debut) - HEURES_DEBUT*60)/60*HAUTEUR_HEURE,
+                      height: Math.max((timeToMin(preview.fin)-timeToMin(preview.debut))/60*HAUTEUR_HEURE, 22),
+                    }}>
+                      <div style={{ fontSize:10, padding:"2px 5px", color:"#E8714A", fontWeight:600 }}>
+                        {minToAff(timeToMin(preview.debut))} – {minToAff(timeToMin(preview.fin))}
+                      </div>
+                    </div>
+                  )}
 
                   {/* Événements */}
                   {rdvs.map(rdv=>{
@@ -391,34 +519,42 @@ export default function AgendaView({ planning, rdvParJourCalcule, agendaRdvs, se
                     const top      = (startMin - HEURES_DEBUT*60)/60*HAUTEUR_HEURE;
                     const height   = Math.max((endMin-startMin)/60*HAUTEUR_HEURE, 22);
                     const c        = TYPE_COLORS[rdv.type] || TYPE_COLORS.rdv;
-                    const estCliquable = rdv.type !== "google"; // Google = lecture seule
+                    const draggable = rdv.type !== "google";
+                    const isDragging = dragInfo?.rdv?.id === rdv.id;
 
                     return (
-                      <div key={rdv.id}
+                      <div
+                        key={rdv.id}
+                        draggable={draggable}
+                        onDragStart={draggable ? (e)=>handleDragStart(e, rdv, rdv.isTournee) : undefined}
+                        onDragEnd={handleDragEnd}
                         onClick={e=>{
                           e.stopPropagation();
-                          if (!estCliquable) return;
-                          ouvrirModal(rdv, rdv.isTournee);
+                          if (dragInfo) return;
+                          if (rdv.type === "google") return;
+                          setModalRdv({ rdv, isTournee: rdv.isTournee });
                         }}
-                        title={estCliquable ? (rdv.isTournee ? "Cliquer pour repositionner l'heure" : "Cliquer pour modifier") : "Événement Google Agenda (lecture seule)"}
                         style={{
                           position:"absolute", left:2, right:2, top, height,
-                          background:c.bg, borderLeft:`3px solid ${c.border}`,
+                          background: isDragging ? "transparent" : c.bg,
+                          border: isDragging ? `2px dashed ${c.border}` : "none",
+                          borderLeft: isDragging ? `2px dashed ${c.border}` : `3px solid ${c.border}`,
                           borderRadius:4, padding:"2px 5px",
-                          cursor: estCliquable ? "pointer" : "default",
+                          cursor: draggable ? "grab" : "default",
                           overflow:"hidden", zIndex:2,
-                          transition:"filter 0.1s",
+                          opacity: isDragging ? 0.4 : 1,
+                          transition:"opacity 0.1s",
                         }}
-                        onMouseEnter={e=>{ if(estCliquable) e.currentTarget.style.filter="brightness(0.96)"; }}
+                        onMouseEnter={e=>{ if(draggable && !isDragging) e.currentTarget.style.filter="brightness(0.94)"; }}
                         onMouseLeave={e=>{ e.currentTarget.style.filter=""; }}
                       >
                         <div style={{ fontSize:10.5, fontWeight:600, color:c.text, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>
                           {rdv.titre}
-                          {rdv.isTournee && <span style={{ fontSize:9, opacity:0.6, marginLeft:4 }}>✎</span>}
+                          {draggable && <span style={{ fontSize:9, opacity:0.5, marginLeft:4 }}>⠿</span>}
                         </div>
                         {height>28 && (
                           <div style={{ fontSize:9.5, color:c.text, opacity:0.8 }}>
-                            {minToAff(timeToMin(rdv.debut))} – {minToAff(timeToMin(rdv.fin))}
+                            {minToAff(startMin)} – {minToAff(endMin)}
                           </div>
                         )}
                       </div>
@@ -432,7 +568,8 @@ export default function AgendaView({ planning, rdvParJourCalcule, agendaRdvs, se
       </div>
 
       {/* Bouton + flottant */}
-      <button onClick={()=>ouvrirModal({ jour:dateToKey(new Date()), debut:"09:00", fin:"09:30", type:"rdv" })}
+      <button
+        onClick={()=>setModalRdv({ rdv:{ jour:dateToKey(new Date()), debut:"09:00", fin:"09:30", type:"rdv" }, isTournee:false })}
         style={{ position:"fixed", bottom:24, right:24, width:48, height:48, borderRadius:"50%", background:"#E8714A", color:"white", border:"none", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", boxShadow:"0 4px 16px rgba(232,113,74,0.4)", zIndex:100 }}>
         <Plus size={22}/>
       </button>
