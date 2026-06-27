@@ -4,58 +4,50 @@ import { ChevronLeft, ChevronRight, Plus, X, Calendar, RefreshCw, CheckCircle2, 
 // ─── Hook Google Calendar (intégré) ──────────────────────────────────────────
 const CLIENT_ID = '185834811620-ai8nof64ohu3792boete33h42i4skr3a.apps.googleusercontent.com';
 const SCOPES = 'https://www.googleapis.com/auth/calendar.events';
+const REDIRECT_URI = window.location.origin + window.location.pathname;
 
-let _gcalTokenClient = null;
 let _gcalAccessToken = null;
 
+// Lire le token depuis le fragment URL après redirection OAuth
+function lireTokenDepuisUrl() {
+  const hash = window.location.hash;
+  if (!hash) return null;
+  const params = new URLSearchParams(hash.replace('#', ''));
+  const token = params.get('access_token');
+  const state = params.get('state');
+  if (token && state === 'gcal') {
+    // Nettoyer l'URL sans recharger la page
+    window.history.replaceState(null, '', window.location.pathname);
+    return token;
+  }
+  return null;
+}
+
 function useGoogleCalendar() {
-  const [isReady, setIsReady] = useState(false);
+  const [isReady, setIsReady] = useState(() => {
+    // Au montage, vérifier si on revient d'une redirection OAuth
+    const token = lireTokenDepuisUrl();
+    if (token) { _gcalAccessToken = token; return true; }
+    return !!_gcalAccessToken;
+  });
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
 
-  // Précharger le script GSI dès le montage du composant
-  React.useEffect(() => {
-    if (window.google?.accounts) return;
-    const script = document.createElement('script');
-    script.src = 'https://accounts.google.com/gsi/client';
-    script.async = true;
-    script.defer = true;
-    document.body.appendChild(script);
-  }, []);
-
-  // authorize() doit être appelé DIRECTEMENT dans un handler de clic (pas après await)
-  // pour que le navigateur autorise la popup
-  const authorize = useCallback(() => {
-    return new Promise((resolve, reject) => {
-      if (!window.google?.accounts) {
-        reject(new Error("Script Google non chargé. Réessaie dans quelques secondes."));
-        return;
-      }
-      setIsLoading(true);
-      setError(null);
-      _gcalTokenClient = window.google.accounts.oauth2.initTokenClient({
-        client_id: CLIENT_ID,
-        scope: SCOPES,
-        callback: (response) => {
-          setIsLoading(false);
-          if (response.error) {
-            setError(response.error);
-            reject(new Error(response.error));
-          } else {
-            _gcalAccessToken = response.access_token;
-            setIsReady(true);
-            resolve(true);
-          }
-        },
-        error_callback: (err) => {
-          setIsLoading(false);
-          setError(err.type || "Erreur OAuth");
-          reject(new Error(err.type || "Erreur OAuth"));
-        },
-      });
-      // requestAccessToken DOIT être appelé dans le même tick que le clic utilisateur
-      _gcalTokenClient.requestAccessToken({ prompt: _gcalAccessToken ? '' : 'consent' });
-    });
+  // Sauvegarder l'action en cours avant redirection
+  const authorize = useCallback((pendingAction) => {
+    // Sauvegarder ce qu'on voulait faire pour le restaurer après redirection
+    if (pendingAction) {
+      try { sessionStorage.setItem('gcal_pending', JSON.stringify(pendingAction)); } catch {}
+    }
+    // Redirection OAuth — pas de popup, pas de blocage navigateur
+    const authUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth');
+    authUrl.searchParams.set('client_id', CLIENT_ID);
+    authUrl.searchParams.set('redirect_uri', REDIRECT_URI);
+    authUrl.searchParams.set('response_type', 'token');
+    authUrl.searchParams.set('scope', SCOPES);
+    authUrl.searchParams.set('state', 'gcal');
+    authUrl.searchParams.set('include_granted_scopes', 'true');
+    window.location.href = authUrl.toString();
   }, []);
 
   const createEvent = useCallback(async ({ pharmacie, date, heure = '09:00', duree = 30, notes = '' }) => {
@@ -474,10 +466,36 @@ function PanneauGoogle({ googleEvents, onImport, onClear }) {
 // ─── Panneau Export vers Google Agenda ───────────────────────────────────────
 function PanneauExport({ rdvParJourCalcule, agendaRdvs, totalRdvPlanifies, isReady, gcalLoading, authorize, createEvent, onClose }) {
   const [recherche, setRecherche] = useState("");
-  const [selectionIds, setSelectionIds] = useState(new Set()); // Set de "clientId|dateKey"
+  const [selectionIds, setSelectionIds] = useState(() => {
+    // Restaurer la sélection après redirection OAuth
+    try {
+      const pending = JSON.parse(sessionStorage.getItem('gcal_pending') || '{}');
+      if (pending.action === 'exportSelection' && pending.keys) {
+        sessionStorage.removeItem('gcal_pending');
+        return new Set(pending.keys);
+      }
+    } catch {}
+    return new Set();
+  });
   const [statut, setStatut] = useState(null); // null | 'en_cours' | 'ok' | 'erreur'
   const [progress, setProgress] = useState({ fait: 0, total: 0 });
   const [erreurs, setErreurs] = useState([]);
+
+  // Si on revient d'une redirection OAuth avec une sélection, envoyer automatiquement
+  const autoSentRef = React.useRef(false);
+  React.useEffect(() => {
+    if (autoSentRef.current) return;
+    if (isReady && _gcalAccessToken && selectionIds.size > 0) {
+      try {
+        const pending = JSON.parse(sessionStorage.getItem('gcal_pending') || '{}');
+        if (pending.action === 'exportSelection') {
+          sessionStorage.removeItem('gcal_pending');
+          autoSentRef.current = true;
+          setTimeout(() => envoyer(), 300);
+        }
+      } catch {}
+    }
+  }, [isReady]);
 
   // Construire la liste de tous les RDV planifiés
   const tousRdvs = [];
@@ -673,7 +691,7 @@ function PanneauExport({ rdvParJourCalcule, agendaRdvs, totalRdvPlanifies, isRea
         style={{ ...btnBase, background: nbSelectionnes === 0 || statut === "en_cours" ? "#DCD7CB" : "#185FA5", color: nbSelectionnes === 0 || statut === "en_cours" ? "#8A93A0" : "white", width:"100%", justifyContent:"center", padding:"11px", fontSize:13 }}>
         <Send size={14}/>
         {!_gcalAccessToken
-          ? "Connecter Google Agenda puis envoyer"
+          ? "Se connecter à Google Agenda"
           : statut === "en_cours"
           ? `Envoi ${progress.fait}/${progress.total}...`
           : nbSelectionnes === 0
@@ -693,6 +711,19 @@ export default function AgendaView({ planning, rdvParJourCalcule, agendaRdvs, se
 
   // ── Export vers Google Agenda ──
   const { isReady, isLoading: gcalLoading, authorize, createEvent } = useGoogleCalendar();
+
+  // Après redirection OAuth, relancer l'export automatiquement si nécessaire
+  React.useEffect(() => {
+    if (!isReady || !_gcalAccessToken) return;
+    try {
+      const pending = JSON.parse(sessionStorage.getItem('gcal_pending') || '{}');
+      if (pending.action === 'exportAll') {
+        sessionStorage.removeItem('gcal_pending');
+        setShowExportPanel(true);
+        // Laisser le panneau s'ouvrir, l'utilisateur re-clique (ou auto via PanneauExport)
+      }
+    } catch {}
+  }, [isReady]);
   const [exportStatut, setExportStatut] = useState(null); // null | 'en_cours' | 'ok' | 'erreur'
   const [exportProgress, setExportProgress] = useState({ fait: 0, total: 0 });
   const [exportErreurs, setExportErreurs] = useState([]);
@@ -722,12 +753,10 @@ export default function AgendaView({ planning, rdvParJourCalcule, agendaRdvs, se
       return;
     }
 
-    // Si pas de token : authorize() ouvre la popup MAINTENANT (même tick que le clic)
-    // puis envoie automatiquement
+    // Si pas de token : redirection OAuth (sauvegarde l'action pour après retour)
     if (!_gcalAccessToken) {
-      try {
-        await authorize();
-      } catch (e) { return; }
+      authorize({ action: 'exportAll' });
+      return; // la page va se recharger après auth
     }
 
     setExportStatut("en_cours");
