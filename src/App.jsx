@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from "react";
 import * as XLSX from "xlsx";
 import { MapPin, Clock, Upload, RefreshCw, Calendar, AlertCircle, CheckCircle2, Sparkles, Trophy, ShieldAlert, Phone, Mail, History, X, Search, ChevronDown, ChevronLeft, ChevronRight, Plus } from "lucide-react";
 import AgendaView from "./AgendaView";
+import BoutonAgenda from "./components/BoutonAgenda";
 
 // ============================================================
 // Constantes
@@ -69,6 +70,12 @@ function minToHHMM(totalMin) {
   const h = Math.floor(totalMin / 60) % 24;
   const m = ((Math.round(totalMin) % 60) + 60) % 60;
   return `${String(h).padStart(2, "0")}h${String(m).padStart(2, "0")}`;
+}
+
+function minToHHMMInput(totalMin) {
+  const h = Math.floor(totalMin / 60) % 24;
+  const m = ((Math.round(totalMin) % 60) + 60) % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
 }
 
 function hhmmToMin(hhmm) {
@@ -174,7 +181,7 @@ function ecrireLocal(storageKey, value) {
 }
 
 // ============================================================
-// Hook useSyncedState — avec agendaRdvs
+// Hook useSyncedState
 // ============================================================
 function useSyncedState(code, syncTick, setSyncTick) {
   const [donnees, setDonneesState] = useState(() => ({
@@ -538,6 +545,8 @@ function App({ code, onDeconnecter }) {
   const [toast, setToast] = useState(null);
   const [rdvAnnule, setRdvAnnule] = useState(null);
   const [planB, setPlanB] = useState(null);
+  // Créneau retenu en attente d'ajout agenda
+  const [creneauRetenu, setCreneauRetenu] = useState(null);
   const fileInputRef = useRef(null);
 
   function showToast(msg, type = "ok") {
@@ -649,6 +658,7 @@ function App({ code, onDeconnecter }) {
   async function chercherCreneau(client, mode = { type: "semaine" }) {
     setErreur("");
     setSuggestions(null);
+    setCreneauRetenu(null);
     if (!client.coords) {
       setErreur(`${client.etablissement} n'est pas localisé. Relance le géocodage ou vérifie son adresse.`);
       return;
@@ -789,6 +799,8 @@ function App({ code, onDeconnecter }) {
     }));
     setClients((prev) => prev.map((c) => (c.id === clientSelectionne.id ? { ...c, prochainRdv: sugg.jour, statutRdv: "Fixe" } : c)));
     showToast(`${clientSelectionne.etablissement} placé le ${formatDateFr(sugg.jour)} à ${minToHHMM(sugg.arrivee)}`, "ok");
+    // Mémoriser le créneau retenu pour proposer l'ajout à l'agenda
+    setCreneauRetenu({ client: clientSelectionne, sugg });
     setSuggestions(null);
     setClientSelectionne(null);
   }
@@ -925,16 +937,21 @@ function App({ code, onDeconnecter }) {
         .tr-jour-block { margin-bottom: 14px; }
         .tr-jour-block-head { display: flex; align-items: center; justify-content: space-between; padding: 9px 12px; background: var(--ardoise); color: white; border-radius: 8px 8px 0 0; font-family: 'Oswald', sans-serif; text-transform: capitalize; font-size: 13px; letter-spacing: 0.02em; gap: 8px; flex-wrap: wrap; }
         .tr-jour-block-body { border: 1px solid var(--gris-clair); border-top: none; border-radius: 0 0 8px 8px; padding: 8px 12px; }
-        .tr-stop-line { display: flex; align-items: center; gap: 10px; padding: 8px 4px; border-bottom: 1px dashed var(--gris-clair); font-size: 13px; }
+        .tr-stop-line { display: flex; align-items: center; gap: 10px; padding: 8px 4px; border-bottom: 1px dashed var(--gris-clair); font-size: 13px; flex-wrap: wrap; }
         .tr-stop-line:last-child { border-bottom: none; }
         .tr-stop-line-time { font-family: 'Oswald', sans-serif; font-weight: 600; min-width: 50px; }
         .tr-stop-line-name { flex: 1; font-weight: 600; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .tr-stop-line-trajet { color: var(--gris); font-size: 11px; white-space: nowrap; }
+        .tr-stop-line-actions { display: flex; gap: 6px; align-items: center; flex-shrink: 0; }
         .tr-modal-overlay { position: fixed; inset: 0; background: rgba(28,38,48,0.55); display: flex; align-items: center; justify-content: center; z-index: 60; padding: 20px; }
         .tr-modal { background: white; border-radius: 12px; padding: 22px; max-width: 560px; width: 100%; max-height: 85vh; overflow-y: auto; }
         .tr-modal-head { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 14px; }
         .tr-planb-item { display: flex; align-items: center; gap: 10px; padding: 10px; border-radius: 8px; border: 1px solid var(--gris-clair); margin-bottom: 8px; }
         .tr-planb-rank { width: 22px; height: 22px; border-radius: 50%; background: var(--ardoise); color: white; font-family: 'Oswald', sans-serif; font-size: 11px; font-weight: 600; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+        .tr-creneau-retenu { background: #F0F7F3; border: 1.5px solid var(--vert); border-radius: 10px; padding: 14px 16px; margin-bottom: 16px; display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+        .tr-creneau-retenu-info { font-size: 13px; }
+        .tr-creneau-retenu-info strong { display: block; font-size: 14px; color: var(--ardoise); margin-bottom: 2px; }
+        .tr-creneau-retenu-info span { color: var(--gris); }
       `}</style>
 
       <div className="tr-shell">
@@ -1067,7 +1084,24 @@ function App({ code, onDeconnecter }) {
             <div>
               {erreur && <div className="tr-alert"><AlertCircle size={16} style={{ flexShrink: 0, marginTop: 1 }} /><span>{erreur}</span></div>}
               {calcEnCours && <div className="tr-card"><div className="tr-empty"><RefreshCw size={22} style={{ marginBottom: 8, opacity: 0.5 }} /><br />Recherche du meilleur créneau...</div></div>}
-              {!suggestions && !calcEnCours && !erreur && (
+
+              {/* BANDEAU CRÉNEAU RETENU + BOUTON AGENDA */}
+              {creneauRetenu && !suggestions && !calcEnCours && (
+                <div className="tr-creneau-retenu">
+                  <div className="tr-creneau-retenu-info">
+                    <strong>✓ {creneauRetenu.client.etablissement}</strong>
+                    <span>Planifié le {formatDateFr(creneauRetenu.sugg.jour)} à {minToHHMM(creneauRetenu.sugg.arrivee)}</span>
+                  </div>
+                  <BoutonAgenda
+                    pharmacie={creneauRetenu.client}
+                    date={creneauRetenu.sugg.jour}
+                    heure={minToHHMMInput(creneauRetenu.sugg.arrivee)}
+                    duree={creneauRetenu.client.dureeDefaut || 20}
+                  />
+                </div>
+              )}
+
+              {!suggestions && !calcEnCours && !erreur && !creneauRetenu && (
                 <div className="tr-card"><div className="tr-empty"><Sparkles size={26} style={{ marginBottom: 8, opacity: 0.4 }} /><br />Sélectionne un client à gauche.<br />L'appli proposera les 3 meilleurs créneaux selon ta semaine planifiée.</div></div>
               )}
               {suggestions && clientSelectionne && !calcEnCours && (
@@ -1260,9 +1294,18 @@ function SemaineView({ departs, definirDepartJour, rdvParJourCalcule, joursTries
                       <span className="tr-stop-line-time">{minToHHMM(item.heureArrivee)}</span>
                       <span className="tr-stop-line-name">{item.client.etablissement}</span>
                       <span className="tr-stop-line-trajet">{item.client.ville}</span>
-                      <button className="tr-btn tr-btn-outline tr-btn-sm" onClick={() => ouvrirPlanB(dateKey, item)}>
-                        <ShieldAlert size={12} /> Lapin
-                      </button>
+                      <div className="tr-stop-line-actions">
+                        {/* Bouton Google Agenda sur chaque RDV de Ma semaine */}
+                        <BoutonAgenda
+                          pharmacie={item.client}
+                          date={dateKey}
+                          heure={minToHHMMInput(item.heureArrivee)}
+                          duree={item.client.dureeDefaut || 20}
+                        />
+                        <button className="tr-btn tr-btn-outline tr-btn-sm" onClick={() => ouvrirPlanB(dateKey, item)}>
+                          <ShieldAlert size={12} /> Lapin
+                        </button>
+                      </div>
                     </div>
                   ))}
                 </div>
