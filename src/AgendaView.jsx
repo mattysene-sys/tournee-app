@@ -1,12 +1,10 @@
-import React, { useState, useEffect, useCallback } from "react";
-import { ChevronLeft, ChevronRight, Plus, X, Calendar, RefreshCw, AlertCircle, CheckCircle2 } from "lucide-react";
+import React, { useState } from "react";
+import { ChevronLeft, ChevronRight, Plus, X, Calendar, RefreshCw, CheckCircle2, Clock } from "lucide-react";
 
 const HEURES_DEBUT = 8;
 const HEURES_FIN = 19;
 const HAUTEUR_HEURE = 56;
 const JOURS_SEMAINE = ["Lun", "Mar", "Mer", "Jeu", "Ven"];
-const SUPABASE_URL = "https://baeglgpwriyvcerybbwj.supabase.co";
-const SUPABASE_KEY = "sb_publishable_feR5aPDkEqXgdjxUqg4nHA_Ci-5TfEJ";
 
 const TYPE_COLORS = {
   tournee: { bg: "#E6F1FB", border: "#185FA5", text: "#0C447C" },
@@ -61,95 +59,137 @@ function isToday(d) {
 
 function uid() { return Math.random().toString(36).slice(2,10); }
 
-function ModalRdv({ rdv, onSave, onDelete, onClose, joursDisponibles }) {
+// ─── Modal création / édition ────────────────────────────────────────────────
+function ModalRdv({ rdv, onSave, onDelete, onClose, isTournee }) {
   const [titre, setTitre] = useState(rdv?.titre || "");
-  const [type, setType] = useState(rdv?.type || "rdv");
-  const [jour, setJour] = useState(rdv?.jour || joursDisponibles[0] || "");
+  const [type, setType]   = useState(rdv?.type  || "rdv");
+  const [jour, setJour]   = useState(rdv?.jour  || "");
   const [debut, setDebut] = useState(rdv?.debut || "09:00");
-  const [fin, setFin] = useState(rdv?.fin || "09:30");
+  const [fin, setFin]     = useState(rdv?.fin   || "09:30");
 
   const lbl = { display:"block", fontSize:11, textTransform:"uppercase", letterSpacing:"0.06em", color:"#8A93A0", marginBottom:5, fontWeight:600 };
   const inp = { width:"100%", padding:"9px 11px", border:"1.5px solid #DCD7CB", borderRadius:6, fontSize:14, fontFamily:"inherit", color:"#1C2630", background:"#F5F2EC", boxSizing:"border-box" };
   const btn = { fontFamily:"'Oswald',sans-serif", textTransform:"uppercase", letterSpacing:"0.04em", fontSize:13, padding:"10px 16px", borderRadius:6, cursor:"pointer", display:"inline-flex", alignItems:"center", justifyContent:"center", gap:6 };
 
+  const titreBloque = isTournee; // On ne peut pas renommer une visite Tournée
+
   return (
     <div style={{ position:"fixed", inset:0, background:"rgba(28,38,48,0.55)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:200, padding:20 }} onClick={onClose}>
       <div style={{ background:"white", borderRadius:12, padding:22, maxWidth:380, width:"100%" }} onClick={e=>e.stopPropagation()}>
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
-          <span style={{ fontFamily:"'Oswald',sans-serif", textTransform:"uppercase", fontSize:13, color:"#8A93A0" }}>{rdv?"Modifier":"Nouveau RDV"}</span>
+          <span style={{ fontFamily:"'Oswald',sans-serif", textTransform:"uppercase", fontSize:13, color:"#8A93A0" }}>
+            {isTournee ? "Repositionner la visite" : rdv?.id ? "Modifier" : "Nouveau RDV"}
+          </span>
           <button onClick={onClose} style={{ background:"none", border:"none", cursor:"pointer", color:"#8A93A0" }}><X size={18}/></button>
         </div>
-        <div style={{ marginBottom:12 }}><label style={lbl}>Titre</label><input style={inp} value={titre} onChange={e=>setTitre(e.target.value)} placeholder="Ex: Réunion IBSA" autoFocus/></div>
+
+        {isTournee && (
+          <div style={{ background:"#E6F1FB", border:"1px solid #185FA5", borderRadius:8, padding:"8px 11px", marginBottom:12, fontSize:12.5, color:"#0C447C" }}>
+            <strong>{rdv.titre}</strong><br/>
+            <span style={{ opacity:0.8 }}>Visite Tournée — seule l'heure est modifiable</span>
+          </div>
+        )}
+
+        {!titreBloque && (
+          <div style={{ marginBottom:12 }}>
+            <label style={lbl}>Titre</label>
+            <input style={inp} value={titre} onChange={e=>setTitre(e.target.value)} placeholder="Ex: Réunion IBSA" autoFocus/>
+          </div>
+        )}
+
+        {!isTournee && (
+          <div style={{ marginBottom:12 }}>
+            <label style={lbl}>Type</label>
+            <div style={{ display:"flex", gap:6 }}>
+              {[{value:"tournee",label:"Visite"},{value:"rdv",label:"RDV perso"}].map(({value,label})=>(
+                <button key={value} onClick={()=>setType(value)} style={{ flex:1, padding:"8px", borderRadius:6, border:"1.5px solid", borderColor:type===value?TYPE_COLORS[value].border:"#DCD7CB", background:type===value?TYPE_COLORS[value].bg:"white", color:type===value?TYPE_COLORS[value].text:"#8A93A0", fontFamily:"'Oswald',sans-serif", fontSize:12, textTransform:"uppercase", cursor:"pointer" }}>{label}</button>
+              ))}
+            </div>
+          </div>
+        )}
+
         <div style={{ marginBottom:12 }}>
-          <label style={lbl}>Type</label>
-          <div style={{ display:"flex", gap:6 }}>
-            {[{value:"tournee",label:"Visite"},{value:"rdv",label:"RDV perso"}].map(({value,label})=>(
-              <button key={value} onClick={()=>setType(value)} style={{ flex:1, padding:"8px", borderRadius:6, border:"1.5px solid", borderColor:type===value?TYPE_COLORS[value].border:"#DCD7CB", background:type===value?TYPE_COLORS[value].bg:"white", color:type===value?TYPE_COLORS[value].text:"#8A93A0", fontFamily:"'Oswald',sans-serif", fontSize:12, textTransform:"uppercase", cursor:"pointer" }}>{label}</button>
-            ))}
+          <label style={lbl}>Jour</label>
+          <input type="date" style={inp} value={jour} onChange={e=>setJour(e.target.value)} readOnly={isTournee}/>
+        </div>
+
+        <div style={{ display:"flex", gap:10, marginBottom:18 }}>
+          <div style={{ flex:1 }}>
+            <label style={lbl}>Début</label>
+            <input type="time" style={inp} value={debut} onChange={e=>setDebut(e.target.value)} autoFocus={isTournee}/>
+          </div>
+          <div style={{ flex:1 }}>
+            <label style={lbl}>Fin</label>
+            <input type="time" style={inp} value={fin} onChange={e=>setFin(e.target.value)}/>
           </div>
         </div>
-        <div style={{ marginBottom:12 }}><label style={lbl}>Jour</label><input type="date" style={inp} value={jour} onChange={e=>setJour(e.target.value)}/></div>
-        <div style={{ display:"flex", gap:10, marginBottom:18 }}>
-          <div style={{ flex:1 }}><label style={lbl}>Début</label><input type="time" style={inp} value={debut} onChange={e=>setDebut(e.target.value)}/></div>
-          <div style={{ flex:1 }}><label style={lbl}>Fin</label><input type="time" style={inp} value={fin} onChange={e=>setFin(e.target.value)}/></div>
-        </div>
+
         <div style={{ display:"flex", gap:8 }}>
-          {rdv && <button onClick={()=>onDelete(rdv.id)} style={{ ...btn, background:"transparent", border:"1.5px solid #C75450", color:"#C75450", padding:"10px 12px" }}><X size={14}/></button>}
+          {rdv?.id && (
+            <button onClick={()=>onDelete(rdv.id)} style={{ ...btn, background:"transparent", border:"1.5px solid #C75450", color:"#C75450", padding:"10px 12px" }}>
+              <X size={14}/>
+            </button>
+          )}
           <button onClick={onClose} style={{ ...btn, flex:1, background:"transparent", border:"1.5px solid #DCD7CB", color:"#8A93A0" }}>Annuler</button>
-          <button onClick={()=>{ if(titre.trim()&&jour) onSave({id:rdv?.id||uid(),titre:titre.trim(),type,jour,debut,fin,readOnly:false}); }} style={{ ...btn, flex:1, background:"#E8714A", color:"white", border:"none" }} disabled={!titre.trim()||!jour}>Enregistrer</button>
+          <button
+            onClick={()=>{
+              const titreEffectif = isTournee ? rdv.titre : titre.trim();
+              if (titreEffectif && jour) {
+                onSave({ id: rdv?.id || uid(), titre: titreEffectif, type: isTournee ? "tournee" : type, jour, debut, fin, readOnly: false, overrideTournee: isTournee ? rdv.clientId : undefined });
+              }
+            }}
+            style={{ ...btn, flex:1, background:"#E8714A", color:"white", border:"none" }}
+            disabled={(!isTournee && !titre.trim()) || !jour}
+          >
+            Enregistrer
+          </button>
         </div>
       </div>
     </div>
   );
 }
 
-function parseIcal(text) {
-  const events = [];
-  const blocks = text.split("BEGIN:VEVENT");
-  blocks.shift();
-  for (const block of blocks) {
-    try {
-      const get = (key) => {
-        const m = block.match(new RegExp(`${key}[^:]*:([^\r\n]+)`));
-        return m ? m[1].trim() : null;
-      };
-      const summary = get("SUMMARY") || "RDV";
-      const dtstart = get("DTSTART");
-      const dtend = get("DTEND");
-      if (!dtstart) continue;
-      function parseDate(s) {
-        const clean = s.replace(/[^0-9T]/g, "");
-        if (clean.length === 8) return new Date(parseInt(clean.slice(0,4)), parseInt(clean.slice(4,6))-1, parseInt(clean.slice(6,8)));
-        const y=parseInt(clean.slice(0,4)), mo=parseInt(clean.slice(4,6))-1, d=parseInt(clean.slice(6,8));
-        const h=parseInt(clean.slice(9,11)||"0"), mi=parseInt(clean.slice(11,13)||"0");
-        return new Date(Date.UTC(y,mo,d,h,mi));
-      }
-      const start = parseDate(dtstart);
-      const end = dtend ? parseDate(dtend) : null;
-      const isAllDay = !dtstart.includes("T");
-      const jour = start.toISOString().slice(0,10);
-      const dh = isAllDay ? 8 : start.getHours(), dm = isAllDay ? 0 : start.getMinutes();
-      const fh = end ? (isAllDay ? 18 : end.getHours()) : dh+1, fm = end ? (isAllDay ? 0 : end.getMinutes()) : dm;
-      const debut = `${String(dh).padStart(2,"0")}:${String(dm).padStart(2,"0")}`;
-      const fin = `${String(Math.min(fh,19)).padStart(2,"0")}:${String(fm).padStart(2,"0")}`;
-      events.push({ id:"gc-"+uid(), titre:summary, type:"google", jour, debut, fin, readOnly:true });
-    } catch { continue; }
-  }
-  return events;
-}
-
+// ─── Panneau import .ics ─────────────────────────────────────────────────────
 function PanneauGoogle({ googleEvents, onImport, onClear }) {
   const fileRef = React.useRef(null);
   const btn = { fontFamily:"'Oswald',sans-serif", textTransform:"uppercase", fontSize:12, padding:"9px 14px", borderRadius:6, cursor:"pointer", display:"inline-flex", alignItems:"center", gap:6, border:"none" };
+
+  function parseIcal(text) {
+    const events = [];
+    const blocks = text.split("BEGIN:VEVENT");
+    blocks.shift();
+    for (const block of blocks) {
+      try {
+        const get = (key) => { const m = block.match(new RegExp(`${key}[^:]*:([^\r\n]+)`)); return m ? m[1].trim() : null; };
+        const summary = get("SUMMARY") || "RDV";
+        const dtstart = get("DTSTART");
+        const dtend   = get("DTEND");
+        if (!dtstart) continue;
+        function parseDate(s) {
+          const clean = s.replace(/[^0-9T]/g,"");
+          if (clean.length===8) return new Date(parseInt(clean.slice(0,4)),parseInt(clean.slice(4,6))-1,parseInt(clean.slice(6,8)));
+          const y=parseInt(clean.slice(0,4)),mo=parseInt(clean.slice(4,6))-1,d=parseInt(clean.slice(6,8));
+          const h=parseInt(clean.slice(9,11)||"0"),mi=parseInt(clean.slice(11,13)||"0");
+          return new Date(Date.UTC(y,mo,d,h,mi));
+        }
+        const start=parseDate(dtstart), end=dtend?parseDate(dtend):null;
+        const isAllDay=!dtstart.includes("T");
+        const jour=start.toISOString().slice(0,10);
+        const dh=isAllDay?8:start.getHours(), dm=isAllDay?0:start.getMinutes();
+        const fh=end?(isAllDay?18:end.getHours()):dh+1, fm=end?(isAllDay?0:end.getMinutes()):dm;
+        const debut=`${String(dh).padStart(2,"0")}:${String(dm).padStart(2,"0")}`;
+        const fin=`${String(Math.min(fh,19)).padStart(2,"0")}:${String(fm).padStart(2,"0")}`;
+        events.push({ id:"gc-"+uid(), titre:summary, type:"google", jour, debut, fin, readOnly:true });
+      } catch { continue; }
+    }
+    return events;
+  }
 
   function handleFile(e) {
     const file = e.target.files[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = (ev) => {
-      const events = parseIcal(ev.target.result);
-      onImport(events);
-    };
+    reader.onload = (ev) => onImport(parseIcal(ev.target.result));
     reader.readAsText(file);
   }
 
@@ -161,7 +201,7 @@ function PanneauGoogle({ googleEvents, onImport, onClear }) {
       {googleEvents.length === 0 ? (
         <>
           <p style={{ fontSize:12.5, color:"#8A93A0", marginBottom:12, lineHeight:1.6 }}>
-            Dans Google Agenda → <strong style={{color:"#1C2630"}}>Paramètres ⚙️ → Importer et exporter → Exporter</strong>. Tu reçois un fichier <strong style={{color:"#1C2630"}}>.zip</strong> → dézippe-le → importe le fichier <strong style={{color:"#1C2630"}}>.ics</strong> ici.
+            Google Agenda → <strong style={{color:"#1C2630"}}>Paramètres ⚙️ → Importer et exporter → Exporter</strong> → dézippe → importe le <strong style={{color:"#1C2630"}}>.ics</strong> ici.
           </p>
           <input ref={fileRef} type="file" accept=".ics" style={{display:"none"}} onChange={handleFile}/>
           <button onClick={()=>fileRef.current?.click()} style={{ ...btn, background:"#E8714A", color:"white", width:"100%", justifyContent:"center" }}>
@@ -188,11 +228,12 @@ function PanneauGoogle({ googleEvents, onImport, onClear }) {
   );
 }
 
-export default function AgendaView({ planning, rdvParJourCalcule, agendaRdvs, setAgendaRdvs, codeSync }) {
+// ─── Composant principal ─────────────────────────────────────────────────────
+export default function AgendaView({ planning, rdvParJourCalcule, agendaRdvs, setAgendaRdvs }) {
   const [semaineOffset, setSemaineOffset] = useState(0);
-  const [modalRdv, setModalRdv] = useState(null);
-  const [googleEvents, setGoogleEvents] = useState(() => { try { return JSON.parse(localStorage.getItem("tournee_google_events") || "[]"); } catch { return []; } });
-  const [showConfig, setShowConfig] = useState(false);
+  const [modalRdv, setModalRdv]           = useState(null); // { rdv, isTournee }
+  const [googleEvents, setGoogleEvents]   = useState(() => { try { return JSON.parse(localStorage.getItem("tournee_google_events") || "[]"); } catch { return []; } });
+  const [showConfig, setShowConfig]       = useState(false);
 
   function importerEvents(events) {
     setGoogleEvents(events);
@@ -205,44 +246,77 @@ export default function AgendaView({ planning, rdvParJourCalcule, agendaRdvs, se
     try { localStorage.removeItem("tournee_google_events"); } catch {}
   }
 
-  const lundi = getLundi(semaineOffset);
-  const jours = Array.from({length:5},(_,i)=>{ const d=new Date(lundi); d.setDate(lundi.getDate()+i); return d; });
+  const lundi  = getLundi(semaineOffset);
+  const jours  = Array.from({length:5},(_,i)=>{ const d=new Date(lundi); d.setDate(lundi.getDate()+i); return d; });
   const numSem = getNumSemaine(lundi);
   const rangeDates = `${lundi.getDate()} – ${jours[4].getDate()} ${lundi.toLocaleString("fr-FR",{month:"long"})} ${lundi.getFullYear()}`;
 
+  // Construit les visites Tournée pour un jour
+  // On applique les overrides d'heure stockés dans agendaRdvs (overrideTournee)
   function getRdvTournee(dateKey) {
-    return (rdvParJourCalcule[dateKey] || []).map(item => ({
-      id: "t-"+item.client.id, titre: item.client.etablissement,
-      type: "tournee", jour: dateKey,
-      debut: minToHHMM(item.heureArrivee), fin: minToHHMM(item.fin),
-      readOnly: true,
-    }));
+    return (rdvParJourCalcule[dateKey] || []).map(item => {
+      const clientId = item.client.id;
+      // Cherche un override d'heure pour cette visite
+      const override = (agendaRdvs || []).find(r => r.overrideTournee === clientId && r.jour === dateKey);
+      return {
+        id:       "t-" + clientId,
+        clientId,
+        titre:    item.client.etablissement,
+        type:     "tournee",
+        jour:     dateKey,
+        debut:    override ? override.debut : minToHHMM(item.heureArrivee),
+        fin:      override ? override.fin   : minToHHMM(item.fin),
+        readOnly: false, // on rend cliquable
+        isTournee: true,
+      };
+    });
   }
 
   function tousLesRdv(dateKey) {
+    const tournee = getRdvTournee(dateKey);
+    // Rdvs perso (sans les overrides qui sont masqués derrière les visites Tournée)
+    const rdvsPerso = (agendaRdvs || []).filter(e => e.jour === dateKey && !e.overrideTournee);
     return [
-      ...getRdvTournee(dateKey),
+      ...tournee,
       ...googleEvents.filter(e => e.jour === dateKey),
-      ...(agendaRdvs || []).filter(e => e.jour === dateKey),
+      ...rdvsPerso,
     ];
   }
 
   function sauvegarderRdv(rdv) {
-    setAgendaRdvs(prev => { const f=(prev||[]).filter(r=>r.id!==rdv.id); return [...f,rdv]; });
+    setAgendaRdvs(prev => {
+      const filtered = (prev || []).filter(r => {
+        if (rdv.overrideTournee) {
+          // Remplacer l'ancien override pour ce client+jour
+          return !(r.overrideTournee === rdv.overrideTournee && r.jour === rdv.jour);
+        }
+        return r.id !== rdv.id;
+      });
+      return [...filtered, rdv];
+    });
     setModalRdv(null);
   }
 
   function supprimerRdv(id) {
-    setAgendaRdvs(prev => (prev||[]).filter(r=>r.id!==id));
+    // Si c'est un override Tournée (id commence par "t-"), on supprime l'override
+    if (id.startsWith("t-")) {
+      const clientId = id.replace("t-", "");
+      setAgendaRdvs(prev => (prev || []).filter(r => !(r.overrideTournee === clientId)));
+    } else {
+      setAgendaRdvs(prev => (prev || []).filter(r => r.id !== id));
+    }
     setModalRdv(null);
+  }
+
+  function ouvrirModal(rdv, isTournee = false) {
+    setModalRdv({ rdv, isTournee });
   }
 
   const heures = Array.from({length:HEURES_FIN-HEURES_DEBUT},(_,i)=>HEURES_DEBUT+i);
 
   return (
     <div style={{ fontFamily:"'Inter',system-ui,sans-serif", color:"#1C2630" }}>
-      <style>{`@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}`}</style>
-
+      {/* En-tête semaine */}
       <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:14, flexWrap:"wrap", gap:10 }}>
         <div>
           <div style={{ fontFamily:"'Oswald',sans-serif", textTransform:"uppercase", fontSize:18, fontWeight:600 }}>Semaine {numSem}</div>
@@ -260,27 +334,36 @@ export default function AgendaView({ planning, rdvParJourCalcule, agendaRdvs, se
 
       {showConfig && <PanneauGoogle googleEvents={googleEvents} onImport={importerEvents} onClear={effacerEvents}/>}
 
+      {/* Légende */}
       <div style={{ display:"flex", gap:14, marginBottom:12, flexWrap:"wrap" }}>
         {[{type:"tournee",label:"Visite Tournée"},{type:"google",label:"Google Agenda"},{type:"rdv",label:"RDV perso"}].map(({type,label})=>(
           <div key={type} style={{ display:"flex", alignItems:"center", gap:6, fontSize:11.5, color:"#8A93A0" }}>
             <div style={{ width:12, height:12, borderRadius:2, background:TYPE_COLORS[type].bg, borderLeft:`3px solid ${TYPE_COLORS[type].border}` }}/>{label}
           </div>
         ))}
+        <div style={{ fontSize:11.5, color:"#8A93A0", marginLeft:"auto", display:"flex", alignItems:"center", gap:4 }}>
+          <Clock size={11}/> Clic sur un événement ou créneau pour modifier
+        </div>
       </div>
 
+      {/* Grille calendrier */}
       <div style={{ background:"white", border:"1px solid #DCD7CB", borderRadius:10, overflow:"hidden" }}>
+        {/* En-têtes jours */}
         <div style={{ display:"grid", gridTemplateColumns:`44px repeat(5,1fr)`, borderBottom:"1px solid #DCD7CB" }}>
           <div style={{ borderRight:"1px solid #DCD7CB" }}/>
           {jours.map((jour,i)=>(
-            <div key={i} style={{ padding:"8px 4px", textAlign:"center", borderRight:i<4?"1px solid #DCD7CB":"none", cursor:"pointer" }} onClick={()=>setModalRdv({rdv:{jour:dateToKey(jour),debut:"09:00",fin:"09:30",type:"rdv"}})}>
+            <div key={i} style={{ padding:"8px 4px", textAlign:"center", borderRight:i<4?"1px solid #DCD7CB":"none", cursor:"pointer" }}
+              onClick={()=>ouvrirModal({ jour:dateToKey(jour), debut:"09:00", fin:"09:30", type:"rdv" })}>
               <div style={{ fontSize:10, color:"#8A93A0", textTransform:"uppercase", letterSpacing:"0.5px", marginBottom:2 }}>{JOURS_SEMAINE[i]}</div>
               <div style={{ fontSize:18, fontFamily:"'Oswald',sans-serif", fontWeight:600, width:30, height:30, borderRadius:"50%", margin:"0 auto", display:"flex", alignItems:"center", justifyContent:"center", background:isToday(jour)?"#E8714A":"transparent", color:isToday(jour)?"white":"#1C2630" }}>{jour.getDate()}</div>
             </div>
           ))}
         </div>
 
+        {/* Corps grille */}
         <div style={{ overflowY:"auto", maxHeight:500 }}>
           <div style={{ display:"grid", gridTemplateColumns:`44px repeat(5,1fr)` }}>
+            {/* Colonne heures */}
             <div style={{ borderRight:"1px solid #DCD7CB" }}>
               {heures.map(h=>(
                 <div key={h} style={{ height:HAUTEUR_HEURE, borderBottom:"1px solid #F0EDE7", display:"flex", alignItems:"flex-start", padding:"3px 4px 0" }}>
@@ -288,25 +371,56 @@ export default function AgendaView({ planning, rdvParJourCalcule, agendaRdvs, se
                 </div>
               ))}
             </div>
+
+            {/* Colonnes jours */}
             {jours.map((jour,colIdx)=>{
               const dateKey = dateToKey(jour);
               const rdvs = tousLesRdv(dateKey);
               return (
                 <div key={colIdx} style={{ position:"relative", borderRight:colIdx<4?"1px solid #DCD7CB":"none", height:HAUTEUR_HEURE*heures.length }}>
+                  {/* Zones cliquables pour créer un RDV */}
                   {heures.map(h=>(
-                    <div key={h} style={{ position:"absolute", left:0, right:0, top:(h-HEURES_DEBUT)*HAUTEUR_HEURE, height:HAUTEUR_HEURE, borderBottom:"1px solid #F0EDE7" }} onClick={()=>setModalRdv({rdv:{jour:dateKey,debut:`${String(h).padStart(2,"0")}:00`,fin:`${String(h+1).padStart(2,"0")}:00`,type:"rdv"}})}/>
+                    <div key={h} style={{ position:"absolute", left:0, right:0, top:(h-HEURES_DEBUT)*HAUTEUR_HEURE, height:HAUTEUR_HEURE, borderBottom:"1px solid #F0EDE7", cursor:"pointer" }}
+                      onClick={()=>ouvrirModal({ jour:dateKey, debut:`${String(h).padStart(2,"0")}:00`, fin:`${String(h+1).padStart(2,"0")}:00`, type:"rdv" })}/>
                   ))}
+
+                  {/* Événements */}
                   {rdvs.map(rdv=>{
                     const startMin = timeToMin(rdv.debut);
-                    const endMin = timeToMin(rdv.fin);
-                    const top = (startMin - HEURES_DEBUT*60)/60*HAUTEUR_HEURE;
-                    const height = Math.max((endMin-startMin)/60*HAUTEUR_HEURE, 20);
-                    const c = TYPE_COLORS[rdv.type]||TYPE_COLORS.rdv;
+                    const endMin   = timeToMin(rdv.fin);
+                    const top      = (startMin - HEURES_DEBUT*60)/60*HAUTEUR_HEURE;
+                    const height   = Math.max((endMin-startMin)/60*HAUTEUR_HEURE, 22);
+                    const c        = TYPE_COLORS[rdv.type] || TYPE_COLORS.rdv;
+                    const estCliquable = rdv.type !== "google"; // Google = lecture seule
+
                     return (
-                      <div key={rdv.id} onClick={e=>{ e.stopPropagation(); if(!rdv.readOnly) setModalRdv({rdv}); }}
-                        style={{ position:"absolute", left:2, right:2, top, height, background:c.bg, borderLeft:`3px solid ${c.border}`, borderRadius:4, padding:"2px 5px", cursor:rdv.readOnly?"default":"pointer", overflow:"hidden", zIndex:2 }}>
-                        <div style={{ fontSize:10.5, fontWeight:600, color:c.text, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{rdv.titre}</div>
-                        {height>28 && <div style={{ fontSize:9.5, color:c.text, opacity:0.8 }}>{minToAff(timeToMin(rdv.debut))} – {minToAff(timeToMin(rdv.fin))}</div>}
+                      <div key={rdv.id}
+                        onClick={e=>{
+                          e.stopPropagation();
+                          if (!estCliquable) return;
+                          ouvrirModal(rdv, rdv.isTournee);
+                        }}
+                        title={estCliquable ? (rdv.isTournee ? "Cliquer pour repositionner l'heure" : "Cliquer pour modifier") : "Événement Google Agenda (lecture seule)"}
+                        style={{
+                          position:"absolute", left:2, right:2, top, height,
+                          background:c.bg, borderLeft:`3px solid ${c.border}`,
+                          borderRadius:4, padding:"2px 5px",
+                          cursor: estCliquable ? "pointer" : "default",
+                          overflow:"hidden", zIndex:2,
+                          transition:"filter 0.1s",
+                        }}
+                        onMouseEnter={e=>{ if(estCliquable) e.currentTarget.style.filter="brightness(0.96)"; }}
+                        onMouseLeave={e=>{ e.currentTarget.style.filter=""; }}
+                      >
+                        <div style={{ fontSize:10.5, fontWeight:600, color:c.text, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>
+                          {rdv.titre}
+                          {rdv.isTournee && <span style={{ fontSize:9, opacity:0.6, marginLeft:4 }}>✎</span>}
+                        </div>
+                        {height>28 && (
+                          <div style={{ fontSize:9.5, color:c.text, opacity:0.8 }}>
+                            {minToAff(timeToMin(rdv.debut))} – {minToAff(timeToMin(rdv.fin))}
+                          </div>
+                        )}
                       </div>
                     );
                   })}
@@ -317,12 +431,22 @@ export default function AgendaView({ planning, rdvParJourCalcule, agendaRdvs, se
         </div>
       </div>
 
-      <button onClick={()=>setModalRdv({rdv:{jour:dateToKey(new Date()),debut:"09:00",fin:"09:30",type:"rdv"}})}
+      {/* Bouton + flottant */}
+      <button onClick={()=>ouvrirModal({ jour:dateToKey(new Date()), debut:"09:00", fin:"09:30", type:"rdv" })}
         style={{ position:"fixed", bottom:24, right:24, width:48, height:48, borderRadius:"50%", background:"#E8714A", color:"white", border:"none", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", boxShadow:"0 4px 16px rgba(232,113,74,0.4)", zIndex:100 }}>
         <Plus size={22}/>
       </button>
 
-      {modalRdv && <ModalRdv rdv={modalRdv.rdv} onSave={sauvegarderRdv} onDelete={supprimerRdv} onClose={()=>setModalRdv(null)} joursDisponibles={jours.map(dateToKey)}/>}
+      {/* Modal */}
+      {modalRdv && (
+        <ModalRdv
+          rdv={modalRdv.rdv}
+          isTournee={modalRdv.isTournee}
+          onSave={sauvegarderRdv}
+          onDelete={supprimerRdv}
+          onClose={()=>setModalRdv(null)}
+        />
+      )}
     </div>
   );
 }
