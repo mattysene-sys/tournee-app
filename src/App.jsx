@@ -613,6 +613,42 @@ function App({ code, onDeconnecter }) {
     );
   }
 
+  // Regéocoder uniquement les clients sans coordonnées
+  const [regeoStatut, setRegeoStatut] = useState(null);
+  async function regeocoder() {
+    const sansCoords = clients.filter(c => !c.coords);
+    if (sansCoords.length === 0) { showToast("Tous les clients sont déjà localisés ✓", "ok"); return; }
+    setRegeoStatut({ fait: 0, total: sansCoords.length, enCours: true });
+    const cache = { ...geoCache };
+    const clesVues = new Set();
+    const aGeocoder = [];
+    sansCoords.forEach(c => {
+      const cle = `${c.cp}|${c.ville}`;
+      if (!clesVues.has(cle)) { clesVues.add(cle); aGeocoder.push({ cle, cp: c.cp, ville: c.ville, adresse: c.adresse }); }
+    });
+    let fait = 0;
+    for (const { cle, cp, ville, adresse } of aGeocoder) {
+      try {
+        // Essayer d'abord avec l'adresse complète, puis juste CP+ville
+        let coords = adresse ? await geocoder(`${adresse}, ${cp} ${ville}, France`) : null;
+        if (!coords) coords = await geocoder(`${cp} ${ville}, France`);
+        if (coords) cache[cle] = coords;
+      } catch {}
+      fait++;
+      setRegeoStatut({ fait, total: aGeocoder.length, enCours: true });
+      await new Promise(r => setTimeout(r, 300));
+    }
+    setGeoCache(cache);
+    const avant = clients.filter(c => !c.coords).length;
+    setClients(prev => prev.map(c => {
+      const cle = `${c.cp}|${c.ville}`;
+      return cache[cle] ? { ...c, coords: cache[cle] } : c;
+    }));
+    await forcerSyncMaintenant();
+    const apres = clients.filter(c => !cache[`${c.cp}|${c.ville}`]).length;
+    setRegeoStatut({ fait, total: aGeocoder.length, enCours: false, localises: avant - apres });
+  }
+
   function initialiserPlanningDepuisImport(listeClients) {
     setPlanning((prev) => {
       const np = { ...prev };
@@ -997,6 +1033,40 @@ function App({ code, onDeconnecter }) {
                 </div>
               )}
               {erreur && <div className="tr-alert" style={{ marginTop: 14, marginBottom: 0 }}><AlertCircle size={16} style={{ flexShrink: 0, marginTop: 1 }} /><span>{erreur}</span></div>}
+
+              {/* Bloc regéocodage */}
+              {clients.length > 0 && (() => {
+                const sansCoords = clients.filter(c => !c.coords).length;
+                return (
+                  <div style={{ marginTop: 16, padding: "12px 14px", background: sansCoords > 0 ? "#FBF0E9" : "#F0F7F3", borderRadius: 8, border: `1px solid ${sansCoords > 0 ? "var(--orange-clair)" : "var(--vert-clair)"}` }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6, color: sansCoords > 0 ? "var(--orange)" : "var(--vert)" }}>
+                      {sansCoords > 0 ? `⚠️ ${sansCoords} client${sansCoords > 1 ? "s" : ""} non localisé${sansCoords > 1 ? "s" : ""}` : "✓ Tous les clients sont localisés"}
+                    </div>
+                    {sansCoords > 0 && (
+                      <div style={{ fontSize: 12, color: "var(--gris)", marginBottom: 10, lineHeight: 1.5 }}>
+                        Ces clients ne peuvent pas être inclus dans le calcul de trajets ni exportés vers Google Agenda.
+                      </div>
+                    )}
+                    {regeoStatut?.enCours && (
+                      <div style={{ marginBottom: 10 }}>
+                        <div style={{ fontSize: 12, color: "var(--gris)", marginBottom: 5 }}>Localisation en cours... {regeoStatut.fait}/{regeoStatut.total}</div>
+                        <div className="tr-progress-bar"><div className="tr-progress-fill" style={{ width: `${regeoStatut.total ? 100 * regeoStatut.fait / regeoStatut.total : 0}%` }} /></div>
+                      </div>
+                    )}
+                    {regeoStatut && !regeoStatut.enCours && (
+                      <div style={{ fontSize: 12, color: "var(--vert)", marginBottom: 8 }}>
+                        <CheckCircle2 size={12} style={{ display: "inline", marginRight: 4, verticalAlign: -1 }} />
+                        {regeoStatut.localises > 0 ? `${regeoStatut.localises} client${regeoStatut.localises > 1 ? "s" : ""} localisé${regeoStatut.localises > 1 ? "s" : ""}` : "Aucun nouveau client localisé — vérifier les CP/villes"}
+                      </div>
+                    )}
+                    {sansCoords > 0 && !regeoStatut?.enCours && (
+                      <button className="tr-btn tr-btn-outline tr-btn-full" onClick={regeocoder} style={{ fontSize: 12 }}>
+                        <MapPin size={13} /> Localiser les {sansCoords} clients manquants
+                      </button>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
             <div className="tr-card">
               <div className="tr-card-title"><MapPin size={14} /> Carnet clients {clients.length > 0 ? `(${clients.length})` : ""}</div>
