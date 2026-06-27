@@ -47,7 +47,7 @@ function useGoogleCalendar() {
   }, [loadGoogleScript]);
 
   const createEvent = useCallback(async ({ pharmacie, date, heure = '09:00', duree = 30, notes = '' }) => {
-    if (!_gcalAccessToken) throw new Error('Non autorisé. Clique sur "Connecter Google Agenda" d'abord.');
+    if (!_gcalAccessToken) throw new Error("Non autorise - connecter Google Agenda.");
     const [annee, mois, jour] = date.split('-');
     const [h, m] = heure.split(':');
     const debut = new Date(annee, mois - 1, jour, h, m);
