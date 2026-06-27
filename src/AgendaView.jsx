@@ -13,38 +13,50 @@ function useGoogleCalendar() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
 
-  const loadGoogleScript = useCallback(() => {
-    return new Promise((resolve) => {
-      if (window.google?.accounts) { resolve(); return; }
-      const script = document.createElement('script');
-      script.src = 'https://accounts.google.com/gsi/client';
-      script.onload = resolve;
-      document.body.appendChild(script);
-    });
+  // Précharger le script GSI dès le montage du composant
+  React.useEffect(() => {
+    if (window.google?.accounts) return;
+    const script = document.createElement('script');
+    script.src = 'https://accounts.google.com/gsi/client';
+    script.async = true;
+    script.defer = true;
+    document.body.appendChild(script);
   }, []);
 
-  const authorize = useCallback(async () => {
-    setIsLoading(true);
-    setError(null);
-    try {
-      await loadGoogleScript();
-      await new Promise((resolve, reject) => {
-        _gcalTokenClient = window.google.accounts.oauth2.initTokenClient({
-          client_id: CLIENT_ID,
-          scope: SCOPES,
-          callback: (response) => {
-            if (response.error) { reject(new Error(response.error)); }
-            else { _gcalAccessToken = response.access_token; setIsReady(true); resolve(); }
-          },
-        });
-        _gcalTokenClient.requestAccessToken({ prompt: 'consent' });
+  // authorize() doit être appelé DIRECTEMENT dans un handler de clic (pas après await)
+  // pour que le navigateur autorise la popup
+  const authorize = useCallback(() => {
+    return new Promise((resolve, reject) => {
+      if (!window.google?.accounts) {
+        reject(new Error("Script Google non chargé. Réessaie dans quelques secondes."));
+        return;
+      }
+      setIsLoading(true);
+      setError(null);
+      _gcalTokenClient = window.google.accounts.oauth2.initTokenClient({
+        client_id: CLIENT_ID,
+        scope: SCOPES,
+        callback: (response) => {
+          setIsLoading(false);
+          if (response.error) {
+            setError(response.error);
+            reject(new Error(response.error));
+          } else {
+            _gcalAccessToken = response.access_token;
+            setIsReady(true);
+            resolve(true);
+          }
+        },
+        error_callback: (err) => {
+          setIsLoading(false);
+          setError(err.type || "Erreur OAuth");
+          reject(new Error(err.type || "Erreur OAuth"));
+        },
       });
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setIsLoading(false);
-    }
-  }, [loadGoogleScript]);
+      // requestAccessToken DOIT être appelé dans le même tick que le clic utilisateur
+      _gcalTokenClient.requestAccessToken({ prompt: _gcalAccessToken ? '' : 'consent' });
+    });
+  }, []);
 
   const createEvent = useCallback(async ({ pharmacie, date, heure = '09:00', duree = 30, notes = '' }) => {
     if (!_gcalAccessToken) throw new Error("Non autorise - connecter Google Agenda.");
@@ -137,9 +149,15 @@ function timeToMin(t) {
   return h * 60 + m;
 }
 
+function snapDemiHeure(min) {
+  // Arrondit à la demi-heure la plus proche (0 ou 30)
+  return Math.round(min / 30) * 30;
+}
+
 function minToHHMM(min) {
-  const h = Math.floor(min / 60) % 24;
-  const m = Math.round(min % 60);
+  const snapped = snapDemiHeure(min);
+  const h = Math.floor(snapped / 60) % 24;
+  const m = snapped % 60;
   return `${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}`;
 }
 
@@ -654,8 +672,8 @@ function PanneauExport({ rdvParJourCalcule, agendaRdvs, totalRdvPlanifies, isRea
         disabled={nbSelectionnes === 0 || statut === "en_cours"}
         style={{ ...btnBase, background: nbSelectionnes === 0 || statut === "en_cours" ? "#DCD7CB" : "#185FA5", color: nbSelectionnes === 0 || statut === "en_cours" ? "#8A93A0" : "white", width:"100%", justifyContent:"center", padding:"11px", fontSize:13 }}>
         <Send size={14}/>
-        {!isReady
-          ? "Connecter Google Agenda"
+        {!_gcalAccessToken
+          ? "Connecter Google Agenda puis envoyer"
           : statut === "en_cours"
           ? `Envoi ${progress.fait}/${progress.total}...`
           : nbSelectionnes === 0
@@ -680,6 +698,7 @@ export default function AgendaView({ planning, rdvParJourCalcule, agendaRdvs, se
   const [exportErreurs, setExportErreurs] = useState([]);
   const [showExportPanel, setShowExportPanel] = useState(false);
 
+  // Appelé directement au clic — authorize() doit être dans le même tick
   async function exporterVersGoogleAgenda() {
     const rdvsAExporter = [];
     Object.entries(rdvParJourCalcule).forEach(([dateKey, items]) => {
@@ -703,10 +722,12 @@ export default function AgendaView({ planning, rdvParJourCalcule, agendaRdvs, se
       return;
     }
 
-    if (!isReady) {
-      await authorize();
-      // Après authorize, l'utilisateur devra recliquer
-      return;
+    // Si pas de token : authorize() ouvre la popup MAINTENANT (même tick que le clic)
+    // puis envoie automatiquement
+    if (!_gcalAccessToken) {
+      try {
+        await authorize();
+      } catch (e) { return; }
     }
 
     setExportStatut("en_cours");
