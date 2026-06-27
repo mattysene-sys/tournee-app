@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import * as XLSX from "xlsx";
+import * as XLSX from "xlsx"; 
 import { MapPin, Clock, Upload, RefreshCw, Calendar, AlertCircle, CheckCircle2, Sparkles, Trophy, ShieldAlert, Phone, Mail, History, X, Search, ChevronDown, ChevronLeft, ChevronRight, Plus } from "lucide-react";
 import AgendaView from "./AgendaView";
 import BoutonAgenda from "./components/BoutonAgenda";
