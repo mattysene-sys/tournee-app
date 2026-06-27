@@ -4,7 +4,7 @@ import { ChevronLeft, ChevronRight, Plus, X, Calendar, RefreshCw, CheckCircle2, 
 // ─── Hook Google Calendar (intégré) ──────────────────────────────────────────
 const CLIENT_ID = '185834811620-ai8nof64ohu3792boete33h42i4skr3a.apps.googleusercontent.com';
 const SCOPES = 'https://www.googleapis.com/auth/calendar.events';
-const REDIRECT_URI = window.location.origin + window.location.pathname;
+const REDIRECT_URI = 'https://tournee-app-iota.vercel.app';
 
 let _gcalAccessToken = null;
 
