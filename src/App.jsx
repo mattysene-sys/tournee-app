@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import * as XLSX from "xlsx"; 
+import * as XLSX from "xlsx";
 import { MapPin, Clock, Upload, RefreshCw, Calendar, AlertCircle, CheckCircle2, Sparkles, Trophy, ShieldAlert, Phone, Mail, History, X, Search, ChevronDown, ChevronLeft, ChevronRight, Plus } from "lucide-react";
 import AgendaView from "./AgendaView";
 import BoutonAgenda from "./components/BoutonAgenda";
@@ -307,6 +307,8 @@ function parseClientsWorkbook(workbook) {
     tel2: colIdx("Tel 2 :"),
     nbVisites: colIdx("Nb visites"),
     ciblage: colIdx("[Ciblage IBSA]"),
+    latitude: colIdx("Latitude"),
+    longitude: colIdx("Longitude"),
   };
 
   const out = [];
@@ -332,7 +334,10 @@ function parseClientsWorkbook(workbook) {
       tel2: idx.tel2 !== -1 ? r[idx.tel2] || null : null,
       nbVisites: idx.nbVisites !== -1 ? Number(r[idx.nbVisites]) || 0 : 0,
       ciblage: idx.ciblage !== -1 ? r[idx.ciblage] || null : null,
-      coords: null,
+      // Lire les coordonnées pré-géocodées si présentes dans le fichier
+      coords: (idx.latitude !== -1 && idx.longitude !== -1 && r[idx.latitude] && r[idx.longitude])
+        ? { lat: parseFloat(r[idx.latitude]), lon: parseFloat(r[idx.longitude]) }
+        : null,
       dureeDefaut: 20,
     });
   }
@@ -541,6 +546,8 @@ function App({ code, onDeconnecter }) {
   const [modeRecherche, setModeRecherche] = useState("urgent");
   const [horizonJours, setHorizonJours] = useState(90);
   const [dateChoisie, setDateChoisie] = useState("");
+  const [periodeDebut, setPeriodeDebut] = useState("");
+  const [periodeFin, setPeriodeFin] = useState("");
   const [erreur, setErreur] = useState("");
   const [toast, setToast] = useState(null);
   const [rdvAnnule, setRdvAnnule] = useState(null);
@@ -713,7 +720,8 @@ function App({ code, onDeconnecter }) {
       let cur = new Date(debut);
       while (cur <= fin) {
         const jourSemaine = cur.getDay();
-        if (jourSemaine !== 0 && jourSemaine !== 6) {
+        // Strict: lundi(1) à vendredi(5) uniquement
+        if (jourSemaine >= 1 && jourSemaine <= 5) {
           const dk = dateToKey(cur);
           ajouterDomicileSiAbsent(dk);
           if (departsEtendus[dk] && !joursAvecDepart.includes(dk)) joursAvecDepart.push(dk);
@@ -727,11 +735,30 @@ function App({ code, onDeconnecter }) {
       ajouterDomicileSiAbsent(mode.date);
       joursAvecDepart = Object.keys(departsEtendus).filter((d) => d === mode.date && departsEtendus[d].coords);
     } else if (mode.type === "semaine") {
-      joursAvecDepart = Object.keys(departs).filter((d) => departs[d].coords);
+      // Ajouter le domicile sur tous les jours ouvrés de la semaine courante
+      if (domicile) {
+        const lundiCourant = new Date(aujourdHuiDate);
+        const jourSem = lundiCourant.getDay();
+        const diffLundi = jourSem === 0 ? -6 : 1 - jourSem;
+        lundiCourant.setDate(lundiCourant.getDate() + diffLundi);
+        for (let i = 0; i < 5; i++) {
+          const d = new Date(lundiCourant);
+          d.setDate(lundiCourant.getDate() + i);
+          ajouterDomicileSiAbsent(dateToKey(d));
+        }
+      }
+      joursAvecDepart = Object.keys(departsEtendus).filter((d) => {
+        const jour = new Date(d + "T00:00:00").getDay();
+        return departsEtendus[d].coords && jour >= 1 && jour <= 5;
+      });
     } else if (mode.type === "urgent") {
       const fin = new Date(aujourdHuiDate);
-      fin.setDate(fin.getDate() + 14);
+      fin.setDate(fin.getDate() + 21);
       ajouterFenetreJoursOuvres(joursAvecDepart, aujourdHuiDate, fin);
+    } else if (mode.type === "periode") {
+      const debut = new Date(mode.debut + "T00:00:00");
+      const fin = new Date(mode.fin + "T00:00:00");
+      ajouterFenetreJoursOuvres(joursAvecDepart, debut, fin);
     } else if (mode.type === "suivi") {
       const base = mode.derniereVisite ? new Date(mode.derniereVisite + "T00:00:00") : new Date(aujourdHuiDate);
       const cible = new Date(base);
@@ -796,31 +823,35 @@ function App({ code, onDeconnecter }) {
         });
       }
     });
+    // Filtrer les créneaux avec coût excessif (> 60 min) sauf si pas d'autre choix
+    const raisonnables = suggestionsParJour.filter(s => s.coutSupplementaire <= 60);
+    const aUtiliser = raisonnables.length > 0 ? raisonnables : suggestionsParJour;
+
     if (mode.type === "urgent") {
-      suggestionsParJour.sort((a, b) => { if (a.jour !== b.jour) return a.jour < b.jour ? -1 : 1; return a.coutSupplementaire - b.coutSupplementaire; });
+      aUtiliser.sort((a, b) => { if (a.jour !== b.jour) return a.jour < b.jour ? -1 : 1; return a.coutSupplementaire - b.coutSupplementaire; });
     } else if (mode.type === "suivi" && dateCibleSuivi) {
       const cibleTime = dateCibleSuivi.getTime();
-      suggestionsParJour.sort((a, b) => {
+      aUtiliser.sort((a, b) => {
         const ecartA = Math.abs(new Date(a.jour + "T00:00:00").getTime() - cibleTime);
         const ecartB = Math.abs(new Date(b.jour + "T00:00:00").getTime() - cibleTime);
         if (ecartA !== ecartB) return ecartA - ecartB;
         return a.coutSupplementaire - b.coutSupplementaire;
       });
     } else {
-      suggestionsParJour.sort((a, b) => a.coutSupplementaire - b.coutSupplementaire);
+      aUtiliser.sort((a, b) => a.coutSupplementaire - b.coutSupplementaire);
     }
     setCalcEnCours(false);
-    if (suggestionsParJour.length === 0) {
-      setErreur(mode.type === "semaine" ? "Aucun créneau ne convient sur les jours actuellement planifiés. Ajoute un point de départ sur d'autres jours, ou élargis la recherche." : "Aucun créneau ne convient sur la période choisie.");
+    if (aUtiliser.length === 0) {
+      setErreur(mode.type === "semaine" ? "Aucun créneau ne convient sur les jours actuellement planifiés. Vérifie que ton domicile est bien défini dans « Ma semaine »." : "Aucun créneau ne convient sur la période choisie.");
       return;
     }
     setClientSelectionne(client);
-    if (mode.type === "urgent" || mode.type === "suivi") {
+    if (mode.type === "urgent" || mode.type === "suivi" || mode.type === "periode") {
       const meilleureParJour = new Map();
-      suggestionsParJour.forEach((s) => { if (!meilleureParJour.has(s.jour)) meilleureParJour.set(s.jour, s); });
-      setSuggestions(Array.from(meilleureParJour.values()).slice(0, 3));
+      aUtiliser.forEach((s) => { if (!meilleureParJour.has(s.jour)) meilleureParJour.set(s.jour, s); });
+      setSuggestions(Array.from(meilleureParJour.values()).slice(0, 5));
     } else {
-      setSuggestions(suggestionsParJour.slice(0, 3));
+      setSuggestions(aUtiliser.slice(0, 5));
     }
   }
 
@@ -1111,6 +1142,7 @@ function App({ code, onDeconnecter }) {
                 <div className="tr-mode-row" style={{ marginTop: 6 }}>
                   <button className={`tr-mode-btn ${modeRecherche === "semaine" ? "active" : ""}`} onClick={() => setModeRecherche("semaine")}>Semaine en cours</button>
                   <button className={`tr-mode-btn ${modeRecherche === "date" ? "active" : ""}`} onClick={() => setModeRecherche("date")}>Date précise</button>
+                  <button className={`tr-mode-btn ${modeRecherche === "periode" ? "active" : ""}`} onClick={() => setModeRecherche("periode")}>Période</button>
                 </div>
               </div>
               {modeRecherche === "suivi" && (
@@ -1130,6 +1162,16 @@ function App({ code, onDeconnecter }) {
                   <input className="tr-input" type="date" value={dateChoisie} min={dateToKey(new Date())} onChange={(e) => setDateChoisie(e.target.value)} />
                 </div>
               )}
+              {modeRecherche === "periode" && (
+                <div className="tr-field">
+                  <label className="tr-label">Période souhaitée</label>
+                  <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                    <input className="tr-input" type="date" value={periodeDebut} min={dateToKey(new Date())} onChange={(e) => setPeriodeDebut(e.target.value)} style={{ flex: 1 }} />
+                    <span style={{ color: "var(--gris)", fontSize: 12, flexShrink: 0 }}>au</span>
+                    <input className="tr-input" type="date" value={periodeFin} min={periodeDebut || dateToKey(new Date())} onChange={(e) => setPeriodeFin(e.target.value)} style={{ flex: 1 }} />
+                  </div>
+                </div>
+              )}
               <div className="tr-search">
                 <Search size={15} />
                 <input className="tr-input" placeholder="Rechercher un établissement ou une ville..." value={recherche} onChange={(e) => setRecherche(e.target.value)} />
@@ -1138,7 +1180,8 @@ function App({ code, onDeconnecter }) {
                 {clientsFiltres.slice(0, 60).map((c) => (
                   <div key={c.id} className="tr-client-row" onClick={() => {
                     if (modeRecherche === "date" && !dateChoisie) { setErreur("Choisis d'abord une date."); return; }
-                    const mode = modeRecherche === "urgent" ? { type: "urgent" } : modeRecherche === "suivi" ? { type: "suivi", jours: horizonJours, derniereVisite: c.derniereVisite } : modeRecherche === "date" ? { type: "date", date: dateChoisie } : { type: "semaine" };
+                    if (modeRecherche === "periode" && (!periodeDebut || !periodeFin)) { setErreur("Choisis une date de début et de fin."); return; }
+                    const mode = modeRecherche === "urgent" ? { type: "urgent" } : modeRecherche === "suivi" ? { type: "suivi", jours: horizonJours, derniereVisite: c.derniereVisite } : modeRecherche === "date" ? { type: "date", date: dateChoisie } : modeRecherche === "periode" ? { type: "periode", debut: periodeDebut, fin: periodeFin } : { type: "semaine" };
                     chercherCreneau(c, mode);
                   }}>
                     <span className="tr-pression-dot" style={{ background: PRESSION_COLOR[c.pression] || "var(--gris)" }}></span>
