@@ -716,6 +716,11 @@ function App({ code, onDeconnecter }) {
       }
     }
 
+    function estJourOuvre(dateKey) {
+      const j = new Date(dateKey + "T00:00:00").getDay();
+      return j >= 1 && j <= 5;
+    }
+
     function ajouterFenetreJoursOuvres(joursAvecDepart, debut, fin) {
       let cur = new Date(debut);
       while (cur <= fin) {
@@ -749,12 +754,18 @@ function App({ code, onDeconnecter }) {
       }
       joursAvecDepart = Object.keys(departsEtendus).filter((d) => {
         const jour = new Date(d + "T00:00:00").getDay();
+        // Strict lun-ven uniquement
         return departsEtendus[d].coords && jour >= 1 && jour <= 5;
       });
     } else if (mode.type === "urgent") {
-      const fin = new Date(aujourdHuiDate);
+      // Commencer au prochain jour ouvré (pas aujourd'hui si c'est un weekend)
+      const debutUrgent = new Date(aujourdHuiDate);
+      const jourUrgent = debutUrgent.getDay();
+      if (jourUrgent === 0) debutUrgent.setDate(debutUrgent.getDate() + 1); // dimanche → lundi
+      if (jourUrgent === 6) debutUrgent.setDate(debutUrgent.getDate() + 2); // samedi → lundi
+      const fin = new Date(debutUrgent);
       fin.setDate(fin.getDate() + 21);
-      ajouterFenetreJoursOuvres(joursAvecDepart, aujourdHuiDate, fin);
+      ajouterFenetreJoursOuvres(joursAvecDepart, debutUrgent, fin);
     } else if (mode.type === "periode") {
       const debut = new Date(mode.debut + "T00:00:00");
       const fin = new Date(mode.fin + "T00:00:00");
@@ -788,6 +799,9 @@ function App({ code, onDeconnecter }) {
       }
       return;
     }
+    // Sécurité finale : éliminer tout jour non ouvré qui aurait pu passer
+    joursAvecDepart = joursAvecDepart.filter(dk => estJourOuvre(dk));
+
     setCalcEnCours(true);
     const rdvParJour = construireRdvParJour(departsEtendus);
     await new Promise((r) => setTimeout(r, 250));
