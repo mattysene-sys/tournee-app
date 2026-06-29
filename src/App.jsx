@@ -772,21 +772,24 @@ function App({ code, onDeconnecter }) {
       ajouterFenetreJoursOuvres(joursAvecDepart, debut, fin);
     } else if (mode.type === "suivi") {
       const base = mode.derniereVisite ? new Date(mode.derniereVisite + "T00:00:00") : new Date(aujourdHuiDate);
-      const cible = new Date(base);
-      cible.setDate(cible.getDate() + mode.jours);
-      const cibleEffective = cible < aujourdHuiDate ? new Date(aujourdHuiDate) : cible;
-      const debutFenetre = new Date(cibleEffective);
-      debutFenetre.setDate(debutFenetre.getDate() - 10);
-      if (debutFenetre < aujourdHuiDate) debutFenetre.setTime(aujourdHuiDate.getTime());
-      const finFenetre = new Date(cibleEffective);
-      finFenetre.setDate(finFenetre.getDate() + 10);
-      ajouterFenetreJoursOuvres(joursAvecDepart, debutFenetre, finFenetre);
+      // Fenêtre : de la moitié de l'intervalle jusqu'à l'intervalle complet
+      // Ex: 6 mois → fenêtre de 3 mois à 6 mois après dernière visite
+      // Ex: 3 mois → fenêtre de 6 semaines à 3 mois après dernière visite
+      // Ex: 1 mois → fenêtre de 2 semaines à 1 mois après dernière visite
+      const debutFenetreDate = new Date(base);
+      debutFenetreDate.setDate(debutFenetreDate.getDate() + Math.floor(mode.jours / 2));
+      if (debutFenetreDate < aujourdHuiDate) debutFenetreDate.setTime(aujourdHuiDate.getTime());
+      const finFenetreDate = new Date(base);
+      finFenetreDate.setDate(finFenetreDate.getDate() + mode.jours);
+      if (finFenetreDate < aujourdHuiDate) finFenetreDate.setTime(aujourdHuiDate.getTime());
+      ajouterFenetreJoursOuvres(joursAvecDepart, debutFenetreDate, finFenetreDate);
     }
 
     let dateCibleSuivi = null;
     if (mode.type === "suivi") {
       const base = mode.derniereVisite ? new Date(mode.derniereVisite + "T00:00:00") : new Date(aujourdHuiDate);
       const cible = new Date(base);
+      // Trier vers la date cible idéale = intervalle complet (6 mois, 3 mois, 1 mois)
       cible.setDate(cible.getDate() + mode.jours);
       dateCibleSuivi = cible < aujourdHuiDate ? new Date(aujourdHuiDate) : cible;
     }
