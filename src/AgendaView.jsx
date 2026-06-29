@@ -345,7 +345,7 @@ function PanneauGoogle({ googleEvents, onImport, onClear }) {
 }
 
 // ─── Panneau Export ───────────────────────────────────────────────────────────
-function PanneauExport({ rdvParJourCalcule, agendaRdvs, totalRdvPlanifies, isReady, authorize, createEvent, onClose }) {
+function PanneauExport({ rdvParJourCalcule, agendaRdvs, totalRdvPlanifies, isReady, authorize, createEvent, onClose, clients }) {
   const [recherche, setRecherche] = useState("");
   const [selectionIds, setSelectionIds] = useState(new Set());
   const [statut, setStatut] = useState(null);
@@ -353,6 +353,8 @@ function PanneauExport({ rdvParJourCalcule, agendaRdvs, totalRdvPlanifies, isRea
   const [erreurs, setErreurs] = useState([]);
 
   const tousRdvs = [];
+
+  // 1. Visites Tournée calculées (avec override horaire si repositionnées)
   Object.entries(rdvParJourCalcule).forEach(([dateKey, items]) => {
     items.forEach(item => {
       const override = (agendaRdvs || []).find(r => r.overrideTournee === item.client.id && r.jour === dateKey);
@@ -367,6 +369,38 @@ function PanneauExport({ rdvParJourCalcule, agendaRdvs, totalRdvPlanifies, isRea
           ? (timeToMin(override.fin) - timeToMin(override.debut))
           : Math.max(30, Math.ceil((item.client.dureeDefaut || 20) / 30) * 30),
       });
+    });
+  });
+
+  // 2. RDV créés manuellement depuis l'Agenda (type tournee, pas overrideTournee)
+  const clientsById = {};
+  (clients || []).forEach(c => { clientsById[c.id] = c; });
+  (agendaRdvs || []).filter(r => !r.overrideTournee && r.type === "tournee").forEach(r => {
+    const key = `agenda|${r.id}`;
+    // Éviter les doublons si déjà dans rdvParJourCalcule
+    if (tousRdvs.some(x => x.key === key)) return;
+    const client = r.clientId ? clientsById[r.clientId] : null;
+    // Construire un faux objet client si pas trouvé (titre libre)
+    const clientEffectif = client || {
+      id: r.id,
+      etablissement: r.titre || "RDV",
+      nom: r.titre || "RDV",
+      ville: "",
+      adresse: "",
+      cp: "",
+      tel1: null,
+      email: null,
+      contact: null,
+      ciblage: null,
+      groupement: null,
+    };
+    tousRdvs.push({
+      key,
+      client: clientEffectif,
+      date: r.jour,
+      debut: r.debut,
+      fin: r.fin,
+      duree: timeToMin(r.fin) - timeToMin(r.debut),
     });
   });
 
@@ -526,7 +560,7 @@ export default function AgendaView({ planning, rdvParJourCalcule, agendaRdvs, se
   // ── Hook Google partagé ──
   const { isReady, authorize, createEvent } = useGoogleCalendar();
 
-  const totalRdvPlanifies = Object.values(rdvParJourCalcule).reduce((acc, items) => acc + items.length, 0);
+  const totalRdvPlanifies = Object.values(rdvParJourCalcule).reduce((acc, items) => acc + items.length, 0) + (agendaRdvs || []).filter(r => !r.overrideTournee && r.type === "tournee").length;
 
   const lundi  = getLundi(semaineOffset);
   const jours  = Array.from({length:5},(_,i)=>{ const d=new Date(lundi); d.setDate(lundi.getDate()+i); return d; });
@@ -707,6 +741,7 @@ export default function AgendaView({ planning, rdvParJourCalcule, agendaRdvs, se
           authorize={authorize}
           createEvent={createEvent}
           onClose={()=>setShowExportPanel(false)}
+          clients={clients}
         />
       )}
 
