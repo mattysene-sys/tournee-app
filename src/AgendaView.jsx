@@ -1,102 +1,6 @@
 import React, { useState, useRef, useCallback } from "react";
 import { ChevronLeft, ChevronRight, Plus, X, Calendar, RefreshCw, CheckCircle2, Clock, Send } from "lucide-react";
-
-// ─── Hook Google Calendar (intégré) ──────────────────────────────────────────
-const CLIENT_ID = '185834811620-ai8nof64ohu3792boete33h42i4skr3a.apps.googleusercontent.com';
-const SCOPES = 'https://www.googleapis.com/auth/calendar.events';
-const REDIRECT_URI = 'https://tournee-app-iota.vercel.app';
-
-let _gcalAccessToken = null;
-
-// Lire le token depuis le fragment URL après redirection OAuth
-function lireTokenDepuisUrl() {
-  const hash = window.location.hash;
-  if (!hash) return null;
-  const params = new URLSearchParams(hash.replace('#', ''));
-  const token = params.get('access_token');
-  const state = params.get('state');
-  if (token && state === 'gcal') {
-    // Nettoyer l'URL sans recharger la page
-    window.history.replaceState(null, '', window.location.pathname);
-    return token;
-  }
-  return null;
-}
-
-function useGoogleCalendar() {
-  const [isReady, setIsReady] = useState(() => {
-    // Au montage, vérifier si on revient d'une redirection OAuth
-    const token = lireTokenDepuisUrl();
-    if (token) { _gcalAccessToken = token; return true; }
-    return !!_gcalAccessToken;
-  });
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState(null);
-
-  // Sauvegarder l'action en cours avant redirection
-  const authorize = useCallback((pendingAction) => {
-    // Sauvegarder ce qu'on voulait faire pour le restaurer après redirection
-    if (pendingAction) {
-      try { sessionStorage.setItem('gcal_pending', JSON.stringify(pendingAction)); } catch {}
-    }
-    // Redirection OAuth — pas de popup, pas de blocage navigateur
-    const authUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth');
-    authUrl.searchParams.set('client_id', CLIENT_ID);
-    authUrl.searchParams.set('redirect_uri', REDIRECT_URI);
-    authUrl.searchParams.set('response_type', 'token');
-    authUrl.searchParams.set('scope', SCOPES);
-    authUrl.searchParams.set('state', 'gcal');
-    authUrl.searchParams.set('include_granted_scopes', 'true');
-    window.location.href = authUrl.toString();
-  }, []);
-
-  const createEvent = useCallback(async ({ pharmacie, date, heure = '09:00', duree = 30, notes = '' }) => {
-    if (!_gcalAccessToken) throw new Error("Non autorise - connecter Google Agenda.");
-    const [annee, mois, jour] = date.split('-');
-    const [h, m] = heure.split(':');
-    const debut = new Date(annee, mois - 1, jour, h, m);
-    const fin = new Date(debut.getTime() + duree * 60000);
-    const pad = (n) => String(n).padStart(2, '0');
-    const toISO = (d) => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:00`;
-    const getCouleur = (ciblage) => {
-      if (!ciblage) return '1';
-      const c = ciblage.toUpperCase();
-      if (c.includes('COMPTE CLE') || c.includes('PLATINIUM')) return '11';
-      if (c.includes('GOLD')) return '5';
-      if (c.includes('SILVER')) return '7';
-      return '1';
-    };
-    const event = {
-      summary: `Visite ${pharmacie.etablissement || pharmacie.nom}`,
-      location: [pharmacie.adresse, pharmacie.ville, pharmacie.cp].filter(Boolean).join(', '),
-      description: [
-        pharmacie.contact ? `Contact : ${pharmacie.contact}` : '',
-        pharmacie.tel1   ? `Tél : ${pharmacie.tel1}` : '',
-        pharmacie.email  ? `Email : ${pharmacie.email}` : '',
-        pharmacie.ciblage    ? `Ciblage : ${pharmacie.ciblage}` : '',
-        pharmacie.groupement ? `Groupement : ${pharmacie.groupement}` : '',
-        notes ? `Notes : ${notes}` : '',
-      ].filter(Boolean).join('\n'),
-      start: { dateTime: toISO(debut), timeZone: 'Europe/Paris' },
-      end:   { dateTime: toISO(fin),   timeZone: 'Europe/Paris' },
-      colorId: getCouleur(pharmacie.ciblage),
-    };
-    const response = await fetch('https://www.googleapis.com/calendar/v3/calendars/primary/events', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${_gcalAccessToken}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify(event),
-    });
-    if (!response.ok) {
-      const err = await response.json();
-      if (err.error?.code === 401) { _gcalAccessToken = null; setIsReady(false); throw new Error('Session expirée. Reconnecte Google Agenda.'); }
-      throw new Error(err.error?.message || 'Erreur API Google Calendar');
-    }
-    return await response.json();
-  }, []);
-
-  return { isReady, isLoading, error, authorize, createEvent };
-}
-
+import { useGoogleCalendar } from "./hooks/useGoogleCalendar";
 
 const HEURES_DEBUT = 8;
 const HEURES_FIN = 19;
@@ -109,7 +13,6 @@ const TYPE_COLORS = {
   rdv:     { bg: "#FAECE7", border: "#993C1D", text: "#712B13" },
 };
 
-// ✅ CORRECTION FUSEAU : utilise l'heure locale, pas UTC
 function dateToKey(d) {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");
@@ -142,7 +45,6 @@ function timeToMin(t) {
 }
 
 function snapDemiHeure(min) {
-  // Arrondit à la demi-heure la plus proche (0 ou 30)
   return Math.round(min / 30) * 30;
 }
 
@@ -153,11 +55,9 @@ function minToHHMM(min) {
   return `${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}`;
 }
 
-// Convertit heureArrivee+fin en debut/fin avec durée minimum 30 min
 function rdvDebutFin(heureArriveeMin, finMin) {
   const debut = snapDemiHeure(heureArriveeMin);
   const dureeReelle = finMin - heureArriveeMin;
-  // Durée minimum 30 min, arrondie au multiple de 30 supérieur
   const dureeSnap = Math.max(30, Math.ceil(dureeReelle / 30) * 30);
   const fin = debut + dureeSnap;
   const toHHMM = (m) => {
@@ -189,14 +89,13 @@ function ModalRdv({ rdv, onSave, onDelete, onClose, isTournee, clients = [] }) {
   const [debut,         setDebut]         = useState(rdv?.debut || "09:00");
   const [fin,           setFin]           = useState(rdv?.fin   || "09:30");
   const [rechercheClient, setRechercheClient] = useState("");
-  const [clientChoisi,  setClientChoisi]  = useState(null); // client sélectionné depuis la base
+  const [clientChoisi,  setClientChoisi]  = useState(null);
   const [showSuggestions, setShowSuggestions] = useState(false);
 
   const lbl = { display:"block", fontSize:11, textTransform:"uppercase", letterSpacing:"0.06em", color:"#8A93A0", marginBottom:5, fontWeight:600 };
   const inp = { width:"100%", padding:"9px 11px", border:"1.5px solid #DCD7CB", borderRadius:6, fontSize:14, fontFamily:"inherit", color:"#1C2630", background:"#F5F2EC", boxSizing:"border-box" };
   const btn = { fontFamily:"'Oswald',sans-serif", textTransform:"uppercase", letterSpacing:"0.04em", fontSize:13, padding:"10px 16px", borderRadius:6, cursor:"pointer", display:"inline-flex", alignItems:"center", justifyContent:"center", gap:6 };
 
-  // Suggestions filtrées depuis la base clients
   const suggestions = rechercheClient.trim().length >= 2
     ? clients.filter(c =>
         c.etablissement.toLowerCase().includes(rechercheClient.toLowerCase()) ||
@@ -209,7 +108,7 @@ function ModalRdv({ rdv, onSave, onDelete, onClose, isTournee, clients = [] }) {
     setTitre(client.etablissement);
     setRechercheClient(client.etablissement);
     setShowSuggestions(false);
-    setType("tournee"); // une visite client = type visite
+    setType("tournee");
   }
 
   function effacerClient() {
@@ -221,14 +120,11 @@ function ModalRdv({ rdv, onSave, onDelete, onClose, isTournee, clients = [] }) {
 
   const titreEffectif = isTournee ? rdv.titre : titre.trim();
   const peutSauvegarder = titreEffectif && jour;
-
   const PRESSION_COLOR = { Rouge: "#C75450", Orange: "#E8714A", Vert: "#5B8C6E" };
 
   return (
     <div style={{ position:"fixed", inset:0, background:"rgba(28,38,48,0.55)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:200, padding:20 }} onClick={onClose}>
       <div style={{ background:"white", borderRadius:12, padding:22, maxWidth:420, width:"100%", maxHeight:"90vh", overflowY:"auto" }} onClick={e=>e.stopPropagation()}>
-
-        {/* En-tête */}
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
           <span style={{ fontFamily:"'Oswald',sans-serif", textTransform:"uppercase", fontSize:13, color:"#8A93A0" }}>
             {isTournee ? "Repositionner la visite" : rdv?.id ? "Modifier" : "Nouveau RDV"}
@@ -236,7 +132,6 @@ function ModalRdv({ rdv, onSave, onDelete, onClose, isTournee, clients = [] }) {
           <button onClick={onClose} style={{ background:"none", border:"none", cursor:"pointer", color:"#8A93A0" }}><X size={18}/></button>
         </div>
 
-        {/* Visite Tournée repositionnée */}
         {isTournee && (
           <div style={{ background:"#E6F1FB", border:"1px solid #185FA5", borderRadius:8, padding:"8px 11px", marginBottom:12, fontSize:12.5, color:"#0C447C" }}>
             <strong>{rdv.titre}</strong><br/>
@@ -244,20 +139,18 @@ function ModalRdv({ rdv, onSave, onDelete, onClose, isTournee, clients = [] }) {
           </div>
         )}
 
-        {/* Recherche client depuis la base */}
         {!isTournee && (
           <div style={{ marginBottom:12 }}>
             <label style={lbl}>Client (base pharmacies)</label>
             <div style={{ position:"relative" }}>
               {clientChoisi ? (
-                /* Client sélectionné — fiche résumée */
                 <div style={{ display:"flex", alignItems:"center", gap:10, padding:"9px 11px", background:"#E6F1FB", border:"1.5px solid #185FA5", borderRadius:6 }}>
                   <span style={{ width:8, height:8, borderRadius:"50%", background: PRESSION_COLOR[clientChoisi.pression] || "#DCD7CB", flexShrink:0 }}/>
                   <div style={{ flex:1, minWidth:0 }}>
-                    <div style={{ fontWeight:600, fontSize:13, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{clientChoisi.etablissement}</div>
-                    <div style={{ fontSize:11, color:"#8A93A0" }}>{clientChoisi.ville}{clientChoisi.ciblage ? ` · ${clientChoisi.ciblage}` : ""}{clientChoisi.tel1 ? ` · ${clientChoisi.tel1}` : ""}</div>
+                    <div style={{ fontWeight:600, fontSize:13 }}>{clientChoisi.etablissement}</div>
+                    <div style={{ fontSize:11, color:"#8A93A0" }}>{clientChoisi.ville}{clientChoisi.ciblage ? ` · ${clientChoisi.ciblage}` : ""}</div>
                   </div>
-                  <button onClick={effacerClient} style={{ background:"none", border:"none", cursor:"pointer", color:"#8A93A0", padding:0, flexShrink:0 }}><X size={14}/></button>
+                  <button onClick={effacerClient} style={{ background:"none", border:"none", cursor:"pointer", color:"#8A93A0", padding:0 }}><X size={14}/></button>
                 </div>
               ) : (
                 <>
@@ -274,46 +167,34 @@ function ModalRdv({ rdv, onSave, onDelete, onClose, isTournee, clients = [] }) {
                       <X size={14}/>
                     </button>
                   )}
-                  {/* Liste de suggestions */}
                   {showSuggestions && suggestions.length > 0 && (
                     <div style={{ position:"absolute", top:"calc(100% + 4px)", left:0, right:0, background:"white", border:"1.5px solid #DCD7CB", borderRadius:8, boxShadow:"0 8px 24px rgba(0,0,0,0.12)", zIndex:300, overflow:"hidden" }}>
                       {suggestions.map(c => (
-                        <div
-                          key={c.id}
-                          onClick={() => choisirClient(c)}
+                        <div key={c.id} onClick={() => choisirClient(c)}
                           style={{ display:"flex", alignItems:"center", gap:9, padding:"9px 12px", cursor:"pointer", borderBottom:"1px solid #F0EDE7" }}
                           onMouseEnter={e => e.currentTarget.style.background="#F5F2EC"}
-                          onMouseLeave={e => e.currentTarget.style.background="white"}
-                        >
+                          onMouseLeave={e => e.currentTarget.style.background="white"}>
                           <span style={{ width:8, height:8, borderRadius:"50%", background: PRESSION_COLOR[c.pression] || "#DCD7CB", flexShrink:0 }}/>
                           <div style={{ flex:1, minWidth:0 }}>
-                            <div style={{ fontWeight:600, fontSize:13, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{c.etablissement}</div>
+                            <div style={{ fontWeight:600, fontSize:13 }}>{c.etablissement}</div>
                             <div style={{ fontSize:11, color:"#8A93A0" }}>{c.ville}{c.ciblage ? ` · ${c.ciblage}` : ""}</div>
                           </div>
-                          {c.tel1 && <span style={{ fontSize:11, color:"#8A93A0", flexShrink:0 }}>{c.tel1}</span>}
                         </div>
                       ))}
                     </div>
                   )}
-                  {showSuggestions && rechercheClient.trim().length >= 2 && suggestions.length === 0 && (
-                    <div style={{ position:"absolute", top:"calc(100% + 4px)", left:0, right:0, background:"white", border:"1.5px solid #DCD7CB", borderRadius:8, padding:"10px 12px", fontSize:12.5, color:"#8A93A0", zIndex:300 }}>
-                      Aucun client trouvé — tu peux quand même saisir un titre libre ci-dessous
-                    </div>
-                  )}
                 </>
               )}
+              {!clientChoisi && (
+                <div style={{ marginTop:10 }}>
+                  <label style={lbl}>Ou titre libre</label>
+                  <input style={inp} value={titre} onChange={e=>setTitre(e.target.value)} placeholder="Ex: Réunion IBSA, Formation..."/>
+                </div>
+              )}
             </div>
-            {/* Titre libre si pas de client sélectionné */}
-            {!clientChoisi && (
-              <div style={{ marginTop:10 }}>
-                <label style={lbl}>Ou titre libre</label>
-                <input style={inp} value={titre} onChange={e=>setTitre(e.target.value)} placeholder="Ex: Réunion IBSA, Formation..."/>
-              </div>
-            )}
           </div>
         )}
 
-        {/* Type — seulement si pas de client pharmacie sélectionné */}
         {!isTournee && !clientChoisi && (
           <div style={{ marginBottom:12 }}>
             <label style={lbl}>Type</label>
@@ -325,13 +206,11 @@ function ModalRdv({ rdv, onSave, onDelete, onClose, isTournee, clients = [] }) {
           </div>
         )}
 
-        {/* Jour */}
         <div style={{ marginBottom:12 }}>
-          <label style={lbl}>Jour {isTournee && <span style={{fontWeight:400,textTransform:"none",fontSize:10}}>(peut changer de semaine)</span>}</label>
+          <label style={lbl}>Jour</label>
           <input type="date" style={inp} value={jour} onChange={e=>setJour(e.target.value)}/>
         </div>
 
-        {/* Heures */}
         <div style={{ display:"flex", gap:10, marginBottom:18 }}>
           <div style={{ flex:1 }}>
             <label style={lbl}>Début</label>
@@ -343,7 +222,6 @@ function ModalRdv({ rdv, onSave, onDelete, onClose, isTournee, clients = [] }) {
           </div>
         </div>
 
-        {/* Boutons */}
         <div style={{ display:"flex", gap:8 }}>
           {rdv?.id && (
             <button onClick={()=>onDelete(rdv.id, rdv)} style={{ ...btn, background:"transparent", border:"1.5px solid #C75450", color:"#C75450", padding:"10px 12px" }}>
@@ -376,7 +254,7 @@ function ModalRdv({ rdv, onSave, onDelete, onClose, isTournee, clients = [] }) {
   );
 }
 
-// ─── Panneau Google ───────────────────────────────────────────────────────────
+// ─── Panneau Import .ics ──────────────────────────────────────────────────────
 function PanneauGoogle({ googleEvents, onImport, onClear }) {
   const fileRef = React.useRef(null);
   const btn = { fontFamily:"'Oswald',sans-serif", textTransform:"uppercase", fontSize:12, padding:"9px 14px", borderRadius:6, cursor:"pointer", display:"inline-flex", alignItems:"center", gap:6, border:"none" };
@@ -391,8 +269,6 @@ function PanneauGoogle({ googleEvents, onImport, onClear }) {
         const summary = get("SUMMARY") || "RDV";
         const dtstart = get("DTSTART"), dtend = get("DTEND");
         if (!dtstart) continue;
-
-        // ✅ CORRECTION FUSEAU : parse en heure locale, pas UTC
         function parseDate(s) {
           const clean = s.replace(/[^0-9T]/g,"");
           const isAllDay = !s.includes("T");
@@ -402,30 +278,20 @@ function PanneauGoogle({ googleEvents, onImport, onClear }) {
           if (isAllDay) return { date: new Date(y, mo, d), isAllDay: true };
           const h  = parseInt(clean.slice(9,11) || "0");
           const mi = parseInt(clean.slice(11,13) || "0");
-          // Si UTC (se termine par Z), convertir en local
           const isUTC = s.endsWith("Z");
           const date = isUTC ? new Date(Date.UTC(y,mo,d,h,mi)) : new Date(y,mo,d,h,mi);
           return { date, isAllDay: false };
         }
-
         const { date: start, isAllDay } = parseDate(dtstart);
         const endParsed = dtend ? parseDate(dtend) : null;
         const end = endParsed?.date || null;
-
-        // ✅ Utilise heure locale pour construire la clé de jour
-        const jourDate = new Date(start);
-        const jour = dateToKey(jourDate);
-
+        const jour = dateToKey(new Date(start));
         const dh = isAllDay ? 8  : start.getHours();
         const dm = isAllDay ? 0  : start.getMinutes();
         const fh = end ? (isAllDay ? 18 : end.getHours())   : dh + 1;
         const fm = end ? (isAllDay ? 0  : end.getMinutes()) : dm;
-
         events.push({
-          id: "gc-" + uid(),
-          titre: summary,
-          type: "google",
-          jour,
+          id: "gc-" + uid(), titre: summary, type: "google", jour,
           debut: `${String(dh).padStart(2,"0")}:${String(dm).padStart(2,"0")}`,
           fin:   `${String(Math.min(fh,19)).padStart(2,"0")}:${String(fm).padStart(2,"0")}`,
           readOnly: true,
@@ -478,41 +344,14 @@ function PanneauGoogle({ googleEvents, onImport, onClear }) {
   );
 }
 
-// ─── Panneau Export vers Google Agenda ───────────────────────────────────────
-function PanneauExport({ rdvParJourCalcule, agendaRdvs, totalRdvPlanifies, isReady, gcalLoading, authorize, createEvent, onClose }) {
+// ─── Panneau Export ───────────────────────────────────────────────────────────
+function PanneauExport({ rdvParJourCalcule, agendaRdvs, totalRdvPlanifies, isReady, authorize, createEvent, onClose }) {
   const [recherche, setRecherche] = useState("");
-  const [selectionIds, setSelectionIds] = useState(() => {
-    // Restaurer la sélection après redirection OAuth
-    try {
-      const pending = JSON.parse(sessionStorage.getItem('gcal_pending') || '{}');
-      if (pending.action === 'exportSelection' && pending.keys) {
-        sessionStorage.removeItem('gcal_pending');
-        return new Set(pending.keys);
-      }
-    } catch {}
-    return new Set();
-  });
-  const [statut, setStatut] = useState(null); // null | 'en_cours' | 'ok' | 'erreur'
+  const [selectionIds, setSelectionIds] = useState(new Set());
+  const [statut, setStatut] = useState(null);
   const [progress, setProgress] = useState({ fait: 0, total: 0 });
   const [erreurs, setErreurs] = useState([]);
 
-  // Si on revient d'une redirection OAuth avec une sélection, envoyer automatiquement
-  const autoSentRef = React.useRef(false);
-  React.useEffect(() => {
-    if (autoSentRef.current) return;
-    if (isReady && _gcalAccessToken && selectionIds.size > 0) {
-      try {
-        const pending = JSON.parse(sessionStorage.getItem('gcal_pending') || '{}');
-        if (pending.action === 'exportSelection') {
-          sessionStorage.removeItem('gcal_pending');
-          autoSentRef.current = true;
-          setTimeout(() => envoyer(), 300);
-        }
-      } catch {}
-    }
-  }, [isReady]);
-
-  // Construire la liste de tous les RDV planifiés
   const tousRdvs = [];
   Object.entries(rdvParJourCalcule).forEach(([dateKey, items]) => {
     items.forEach(item => {
@@ -531,7 +370,6 @@ function PanneauExport({ rdvParJourCalcule, agendaRdvs, totalRdvPlanifies, isRea
     });
   });
 
-  // Filtrer par recherche
   const rdvsFiltres = recherche.trim().length >= 1
     ? tousRdvs.filter(r =>
         r.client.etablissement.toLowerCase().includes(recherche.toLowerCase()) ||
@@ -546,14 +384,6 @@ function PanneauExport({ rdvParJourCalcule, agendaRdvs, totalRdvPlanifies, isRea
       else next.add(key);
       return next;
     });
-  }
-
-  function toutSelectionner() {
-    setSelectionIds(new Set(rdvsFiltres.map(r => r.key)));
-  }
-
-  function toutDeselectionner() {
-    setSelectionIds(new Set());
   }
 
   async function envoyer() {
@@ -585,7 +415,7 @@ function PanneauExport({ rdvParJourCalcule, agendaRdvs, totalRdvPlanifies, isRea
   }
 
   const nbSelectionnes = selectionIds.size;
-  const inp = { width:"100%", padding:"9px 34px 9px 11px", border:"1.5px solid #DCD7CB", borderRadius:6, fontSize:14, fontFamily:"inherit", color:"#1C2630", background:"#F5F2EC", boxSizing:"border-box" };
+  const inp = { width:"100%", padding:"9px 11px", border:"1.5px solid #DCD7CB", borderRadius:6, fontSize:14, fontFamily:"inherit", color:"#1C2630", background:"#F5F2EC", boxSizing:"border-box" };
   const btnBase = { fontFamily:"'Oswald',sans-serif", textTransform:"uppercase", letterSpacing:"0.04em", fontSize:12, padding:"8px 13px", borderRadius:6, cursor:"pointer", display:"inline-flex", alignItems:"center", gap:5, border:"none" };
 
   return (
@@ -597,29 +427,31 @@ function PanneauExport({ rdvParJourCalcule, agendaRdvs, totalRdvPlanifies, isRea
         <button onClick={onClose} style={{ background:"none", border:"none", cursor:"pointer", color:"#8A93A0" }}><X size={16}/></button>
       </div>
 
-      {/* Barre de recherche */}
-      <div style={{ position:"relative", marginBottom:10 }}>
-        <input
-          style={inp}
-          placeholder="Rechercher un client ou une ville..."
-          value={recherche}
-          onChange={e => setRecherche(e.target.value)}
-          autoFocus
-        />
-        {recherche && (
-          <button onClick={()=>setRecherche("")} style={{ position:"absolute", right:8, top:"50%", transform:"translateY(-50%)", background:"none", border:"none", cursor:"pointer", color:"#8A93A0", padding:0 }}>
-            <X size={14}/>
+      {/* Connexion Google si pas encore fait */}
+      {!isReady && (
+        <div style={{ background:"#FBF0E9", border:"1px solid #E8714A", borderRadius:8, padding:"10px 12px", marginBottom:12, display:"flex", alignItems:"center", justifyContent:"space-between", gap:10 }}>
+          <span style={{ fontSize:12.5, color:"#993C1D" }}>Connecte ton Google Agenda pour envoyer les visites</span>
+          <button onClick={authorize} style={{ ...btnBase, background:"#E8714A", color:"white", whiteSpace:"nowrap" }}>
+            📅 Connecter
           </button>
-        )}
+        </div>
+      )}
+      {isReady && (
+        <div style={{ background:"#DCEAE0", border:"1px solid #5B8C6E", borderRadius:8, padding:"8px 12px", marginBottom:12, fontSize:12.5, color:"#27500A", display:"flex", alignItems:"center", gap:6 }}>
+          <CheckCircle2 size={13}/> Google Agenda connecté
+        </div>
+      )}
+
+      <div style={{ position:"relative", marginBottom:10 }}>
+        <input style={inp} placeholder="Rechercher un client ou une ville..." value={recherche} onChange={e => setRecherche(e.target.value)} autoFocus/>
       </div>
 
-      {/* Actions de sélection */}
       <div style={{ display:"flex", gap:6, marginBottom:10, alignItems:"center", flexWrap:"wrap" }}>
-        <button onClick={toutSelectionner} style={{ ...btnBase, background:"#F5F2EC", color:"#1C2630", border:"1px solid #DCD7CB" }}>
+        <button onClick={() => setSelectionIds(new Set(rdvsFiltres.map(r => r.key)))} style={{ ...btnBase, background:"#F5F2EC", color:"#1C2630", border:"1px solid #DCD7CB" }}>
           Tout sélectionner ({rdvsFiltres.length})
         </button>
         {nbSelectionnes > 0 && (
-          <button onClick={toutDeselectionner} style={{ ...btnBase, background:"transparent", color:"#8A93A0", border:"1px solid #DCD7CB" }}>
+          <button onClick={() => setSelectionIds(new Set())} style={{ ...btnBase, background:"transparent", color:"#8A93A0", border:"1px solid #DCD7CB" }}>
             Tout désélectionner
           </button>
         )}
@@ -630,63 +462,31 @@ function PanneauExport({ rdvParJourCalcule, agendaRdvs, totalRdvPlanifies, isRea
         )}
       </div>
 
-      {/* Liste des RDV */}
       <div style={{ maxHeight:280, overflowY:"auto", border:"1px solid #DCD7CB", borderRadius:8, marginBottom:12 }}>
-        {rdvsFiltres.length === 0 && (
-          <div style={{ padding:16, textAlign:"center", color:"#8A93A0", fontSize:13 }}>
-            Aucun résultat
-          </div>
-        )}
+        {rdvsFiltres.length === 0 && <div style={{ padding:16, textAlign:"center", color:"#8A93A0", fontSize:13 }}>Aucun résultat</div>}
         {rdvsFiltres.map((r, i) => {
           const selected = selectionIds.has(r.key);
           const dateAff = new Date(r.date + "T00:00:00").toLocaleDateString("fr-FR", { weekday:"short", day:"numeric", month:"short" });
           return (
-            <div
-              key={r.key}
-              onClick={() => toggleSelection(r.key)}
-              style={{
-                display:"flex", alignItems:"center", gap:10, padding:"9px 12px",
-                borderBottom: i < rdvsFiltres.length - 1 ? "1px solid #F0EDE7" : "none",
-                cursor:"pointer",
-                background: selected ? "#EEF4FB" : "white",
-                transition:"background 0.1s",
-              }}
-            >
-              {/* Checkbox */}
-              <div style={{
-                width:18, height:18, borderRadius:4, border:"1.5px solid",
-                borderColor: selected ? "#185FA5" : "#DCD7CB",
-                background: selected ? "#185FA5" : "white",
-                display:"flex", alignItems:"center", justifyContent:"center",
-                flexShrink:0, transition:"all 0.15s",
-              }}>
+            <div key={r.key} onClick={() => toggleSelection(r.key)}
+              style={{ display:"flex", alignItems:"center", gap:10, padding:"9px 12px", borderBottom: i < rdvsFiltres.length - 1 ? "1px solid #F0EDE7" : "none", cursor:"pointer", background: selected ? "#EEF4FB" : "white" }}>
+              <div style={{ width:18, height:18, borderRadius:4, border:"1.5px solid", borderColor: selected ? "#185FA5" : "#DCD7CB", background: selected ? "#185FA5" : "white", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
                 {selected && <CheckCircle2 size={12} color="white" strokeWidth={3}/>}
               </div>
-              {/* Infos */}
               <div style={{ flex:1, minWidth:0 }}>
-                <div style={{ fontSize:13, fontWeight:600, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis", color:"#1C2630" }}>
-                  {r.client.etablissement}
-                </div>
-                <div style={{ fontSize:11, color:"#8A93A0" }}>
-                  {dateAff} · {r.debut.replace(":"," h ").replace(/^0/,"")} – {r.fin.replace(":"," h ").replace(/^0/,"")} · {r.client.ville}
-                </div>
+                <div style={{ fontSize:13, fontWeight:600, color:"#1C2630", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{r.client.etablissement}</div>
+                <div style={{ fontSize:11, color:"#8A93A0" }}>{dateAff} · {r.debut.replace(":"," h ")} – {r.fin.replace(":"," h ")} · {r.client.ville}</div>
               </div>
-              {r.client.ciblage && (
-                <span style={{ fontSize:10, fontFamily:"'Oswald',sans-serif", textTransform:"uppercase", padding:"2px 7px", borderRadius:999, background:"#F5F2EC", color:"#8A93A0", flexShrink:0 }}>
-                  {r.client.ciblage}
-                </span>
-              )}
             </div>
           );
         })}
       </div>
 
-      {/* Barre de progression */}
       {statut === "en_cours" && (
         <div style={{ marginBottom:12 }}>
           <div style={{ fontSize:12, color:"#8A93A0", marginBottom:5 }}>Envoi en cours... {progress.fait}/{progress.total}</div>
           <div style={{ height:5, background:"#DCD7CB", borderRadius:99, overflow:"hidden" }}>
-            <div style={{ height:"100%", background:"#185FA5", borderRadius:99, transition:"width 0.3s", width: progress.total ? `${100*progress.fait/progress.total}%` : "0%" }}/>
+            <div style={{ height:"100%", background:"#185FA5", borderRadius:99, width: progress.total ? `${100*progress.fait/progress.total}%` : "0%" }}/>
           </div>
         </div>
       )}
@@ -700,18 +500,11 @@ function PanneauExport({ rdvParJourCalcule, agendaRdvs, totalRdvPlanifies, isRea
         <div style={{ fontSize:12, color:"#8A3530", background:"#FCEEED", borderRadius:7, padding:"8px 11px", marginBottom:10 }}>{erreurs[0]}</div>
       )}
 
-      {/* Bouton envoyer */}
-      <button
-        onClick={envoyer}
-        disabled={nbSelectionnes === 0 || statut === "en_cours"}
+      <button onClick={envoyer} disabled={nbSelectionnes === 0 || statut === "en_cours"}
         style={{ ...btnBase, background: nbSelectionnes === 0 || statut === "en_cours" ? "#DCD7CB" : "#185FA5", color: nbSelectionnes === 0 || statut === "en_cours" ? "#8A93A0" : "white", width:"100%", justifyContent:"center", padding:"11px", fontSize:13 }}>
         <Send size={14}/>
-        {!_gcalAccessToken
-          ? "Se connecter à Google Agenda"
-          : statut === "en_cours"
-          ? `Envoi ${progress.fait}/${progress.total}...`
-          : nbSelectionnes === 0
-          ? "Sélectionne des visites ci-dessus"
+        {statut === "en_cours" ? `Envoi ${progress.fait}/${progress.total}...`
+          : nbSelectionnes === 0 ? "Sélectionne des visites ci-dessus"
           : `Envoyer ${nbSelectionnes} visite${nbSelectionnes > 1 ? "s" : ""} vers Google Agenda`}
       </button>
     </div>
@@ -724,87 +517,16 @@ export default function AgendaView({ planning, rdvParJourCalcule, agendaRdvs, se
   const [modalRdv, setModalRdv]           = useState(null);
   const [googleEvents, setGoogleEvents]   = useState(() => { try { return JSON.parse(localStorage.getItem("tournee_google_events") || "[]"); } catch { return []; } });
   const [showConfig, setShowConfig]       = useState(false);
-
-  // ── Export vers Google Agenda ──
-  const { isReady, isLoading: gcalLoading, authorize, createEvent } = useGoogleCalendar();
-
-  // Après redirection OAuth, relancer l'export automatiquement si nécessaire
-  React.useEffect(() => {
-    if (!isReady || !_gcalAccessToken) return;
-    try {
-      const pending = JSON.parse(sessionStorage.getItem('gcal_pending') || '{}');
-      if (pending.action === 'exportAll') {
-        sessionStorage.removeItem('gcal_pending');
-        setShowExportPanel(true);
-        // Laisser le panneau s'ouvrir, l'utilisateur re-clique (ou auto via PanneauExport)
-      }
-    } catch {}
-  }, [isReady]);
-  const [exportStatut, setExportStatut] = useState(null); // null | 'en_cours' | 'ok' | 'erreur'
-  const [exportProgress, setExportProgress] = useState({ fait: 0, total: 0 });
-  const [exportErreurs, setExportErreurs] = useState([]);
   const [showExportPanel, setShowExportPanel] = useState(false);
+  const [dragInfo, setDragInfo]           = useState(null);
+  const [dropPreview, setDropPreview]     = useState(null);
+  const gridRef                           = useRef(null);
+  const colRefs                           = useRef([]);
 
-  // Appelé directement au clic — authorize() doit être dans le même tick
-  async function exporterVersGoogleAgenda() {
-    const rdvsAExporter = [];
-    Object.entries(rdvParJourCalcule).forEach(([dateKey, items]) => {
-      items.forEach(item => {
-        const override = (agendaRdvs || []).find(r => r.overrideTournee === item.client.id && r.jour === dateKey);
-        const bf = override ? null : rdvDebutFin(item.heureArrivee, item.fin);
-        rdvsAExporter.push({
-          client: item.client,
-          date: dateKey,
-          debut: override ? override.debut : bf.debut,
-          fin:   override ? override.fin   : bf.fin,
-          duree: override
-            ? (timeToMin(override.fin) - timeToMin(override.debut))
-            : Math.max(30, Math.ceil((item.client.dureeDefaut || 20) / 30) * 30),
-        });
-      });
-    });
+  // ── Hook Google partagé ──
+  const { isReady, authorize, createEvent } = useGoogleCalendar();
 
-    if (rdvsAExporter.length === 0) {
-      setExportStatut("erreur");
-      setExportErreurs(["Aucun RDV planifié à exporter."]);
-      return;
-    }
-
-    // Si pas de token : redirection OAuth (sauvegarde l'action pour après retour)
-    if (!_gcalAccessToken) {
-      authorize({ action: 'exportAll' });
-      return; // la page va se recharger après auth
-    }
-
-    setExportStatut("en_cours");
-    setExportProgress({ fait: 0, total: rdvsAExporter.length });
-    setExportErreurs([]);
-
-    const erreurs = [];
-    for (let i = 0; i < rdvsAExporter.length; i++) {
-      const r = rdvsAExporter[i];
-      try {
-        await createEvent({ pharmacie: r.client, date: r.date, heure: r.debut, duree: r.duree });
-      } catch (err) {
-        erreurs.push(`${r.client.etablissement} : ${err.message}`);
-      }
-      setExportProgress({ fait: i + 1, total: rdvsAExporter.length });
-      await new Promise(res => setTimeout(res, 200));
-    }
-
-    setExportErreurs(erreurs);
-    setExportStatut(erreurs.length === rdvsAExporter.length ? "erreur" : "ok");
-  }
-
-  // Compter les RDV planifiés (toutes semaines) — depuis le planning complet
   const totalRdvPlanifies = Object.values(rdvParJourCalcule).reduce((acc, items) => acc + items.length, 0);
-  // Note: rdvParJourCalcule ne contient que les clients avec coordonnées GPS
-  // Les clients sans coords ne sont pas exportables vers Google Agenda
-
-  const [dragInfo, setDragInfo]       = useState(null);
-  const [dropPreview, setDropPreview] = useState(null);
-  const gridRef                       = useRef(null);
-  const colRefs                       = useRef([]);
 
   const lundi  = getLundi(semaineOffset);
   const jours  = Array.from({length:5},(_,i)=>{ const d=new Date(lundi); d.setDate(lundi.getDate()+i); return d; });
@@ -921,11 +643,7 @@ export default function AgendaView({ planning, rdvParJourCalcule, agendaRdvs, se
     const dureeMin = timeToMin(dragInfo.rdv.fin) - timeToMin(dragInfo.rdv.debut);
     const debutSnap = Math.max(HEURES_DEBUT*60, min - dragInfo.offsetMin);
     const finSnap   = debutSnap + dureeMin;
-    setDropPreview({
-      jour:  dateToKey(jours[colIdx]),
-      debut: minToHHMM(debutSnap),
-      fin:   minToHHMM(Math.min(finSnap, HEURES_FIN*60)),
-    });
+    setDropPreview({ jour: dateToKey(jours[colIdx]), debut: minToHHMM(debutSnap), fin: minToHHMM(Math.min(finSnap, HEURES_FIN*60)) });
   }, [dragInfo, jours]);
 
   const handleDrop = useCallback((e) => {
@@ -933,43 +651,30 @@ export default function AgendaView({ planning, rdvParJourCalcule, agendaRdvs, se
     if (!dragInfo || !dropPreview) { setDragInfo(null); setDropPreview(null); return; }
     const { rdv, isTournee } = dragInfo;
     const updated = {
-      id:    rdv.id.startsWith("t-") ? uid() : rdv.id,
-      titre: rdv.titre,
-      type:  rdv.type,
-      jour:  dropPreview.jour,
-      debut: dropPreview.debut,
-      fin:   dropPreview.fin,
+      id: rdv.id.startsWith("t-") ? uid() : rdv.id,
+      titre: rdv.titre, type: rdv.type,
+      jour: dropPreview.jour, debut: dropPreview.debut, fin: dropPreview.fin,
       readOnly: false,
       overrideTournee: isTournee ? rdv.clientId : undefined,
     };
     setAgendaRdvs(prev => {
       let filtered = (prev||[]);
-      if (isTournee) {
-        filtered = filtered.filter(r => r.overrideTournee !== rdv.clientId);
-      } else {
-        filtered = filtered.filter(r => r.id !== rdv.id);
-      }
+      if (isTournee) filtered = filtered.filter(r => r.overrideTournee !== rdv.clientId);
+      else filtered = filtered.filter(r => r.id !== rdv.id);
       return [...filtered, updated];
     });
     setDragInfo(null);
     setDropPreview(null);
   }, [dragInfo, dropPreview, setAgendaRdvs]);
 
-  const handleDragEnd = useCallback(() => {
-    setDragInfo(null);
-    setDropPreview(null);
-  }, []);
+  const handleDragEnd = useCallback(() => { setDragInfo(null); setDropPreview(null); }, []);
 
-  const heures = Array.from({length:HEURES_FIN-HEURES_DEBUT},(_,i)=>HEURES_DEBUT+i);
   const demiHeures = Array.from({length:(HEURES_FIN-HEURES_DEBUT)*2},(_,i)=>HEURES_DEBUT*60+i*30);
 
   return (
     <div style={{ fontFamily:"'Inter',system-ui,sans-serif", color:"#1C2630", userSelect: dragInfo ? "none" : "auto" }}>
       <style>{`
-        .agenda-event-drag { cursor: grab; }
-        .agenda-event-drag:active { cursor: grabbing; opacity: 0.5; }
         .agenda-drop-preview { position:absolute; left:2px; right:2px; background:rgba(232,113,74,0.18); border:2px dashed #E8714A; border-radius:4px; pointer-events:none; z-index:10; }
-        .agenda-col-dropzone { position:absolute; inset:0; }
       `}</style>
 
       {/* En-tête */}
@@ -979,13 +684,12 @@ export default function AgendaView({ planning, rdvParJourCalcule, agendaRdvs, se
           <div style={{ fontSize:12, color:"#8A93A0", marginTop:2 }}>{rangeDates}</div>
         </div>
         <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
-          <button
-            onClick={()=>{ setShowExportPanel(s=>!s); setExportStatut(null); setExportErreurs([]); }}
-            disabled={totalRdvPlanifies === 0}
-            style={{ fontFamily:"'Oswald',sans-serif", textTransform:"uppercase", fontSize:11, padding:"7px 12px", borderRadius:6, border:"1.5px solid", borderColor: exportStatut==="ok" ? "#5B8C6E" : "#185FA5", background: exportStatut==="ok" ? "#DCEAE0" : "#E6F1FB", color: exportStatut==="ok" ? "#27500A" : "#0C447C", cursor:"pointer", display:"flex", alignItems:"center", gap:5, opacity: totalRdvPlanifies===0 ? 0.4 : 1 }}>
-            <Send size={12}/>{exportStatut==="ok" ? "Envoyé ✓" : `Envoyer planning (${totalRdvPlanifies})`}
+          <button onClick={()=>{ setShowExportPanel(s=>!s); }} disabled={totalRdvPlanifies === 0}
+            style={{ fontFamily:"'Oswald',sans-serif", textTransform:"uppercase", fontSize:11, padding:"7px 12px", borderRadius:6, border:"1.5px solid #185FA5", background:"#E6F1FB", color:"#0C447C", cursor:"pointer", display:"flex", alignItems:"center", gap:5, opacity: totalRdvPlanifies===0 ? 0.4 : 1 }}>
+            <Send size={12}/> Envoyer planning ({totalRdvPlanifies})
           </button>
-          <button onClick={()=>setShowConfig(s=>!s)} style={{ fontFamily:"'Oswald',sans-serif", textTransform:"uppercase", fontSize:11, padding:"7px 12px", borderRadius:6, border:"1.5px solid", borderColor:googleEvents.length>0?"#5B8C6E":"#DCD7CB", background:googleEvents.length>0?"#DCEAE0":"white", color:googleEvents.length>0?"#5B8C6E":"#8A93A0", cursor:"pointer", display:"flex", alignItems:"center", gap:5 }}>
+          <button onClick={()=>setShowConfig(s=>!s)}
+            style={{ fontFamily:"'Oswald',sans-serif", textTransform:"uppercase", fontSize:11, padding:"7px 12px", borderRadius:6, border:"1.5px solid", borderColor:googleEvents.length>0?"#5B8C6E":"#DCD7CB", background:googleEvents.length>0?"#DCEAE0":"white", color:googleEvents.length>0?"#5B8C6E":"#8A93A0", cursor:"pointer", display:"flex", alignItems:"center", gap:5 }}>
             <Calendar size={13}/>{googleEvents.length>0?`Google (${googleEvents.length})` :"Importer .ics"}
           </button>
           <button onClick={()=>setSemaineOffset(0)} style={{ fontFamily:"'Oswald',sans-serif", fontSize:11, padding:"7px 12px", borderRadius:6, border:"1.5px solid #DCD7CB", background:"white", color:"#8A93A0", cursor:"pointer" }}>Aujourd'hui</button>
@@ -994,14 +698,12 @@ export default function AgendaView({ planning, rdvParJourCalcule, agendaRdvs, se
         </div>
       </div>
 
-      {/* Panneau export vers Google Agenda */}
       {showExportPanel && (
         <PanneauExport
           rdvParJourCalcule={rdvParJourCalcule}
           agendaRdvs={agendaRdvs}
           totalRdvPlanifies={totalRdvPlanifies}
           isReady={isReady}
-          gcalLoading={gcalLoading}
           authorize={authorize}
           createEvent={createEvent}
           onClose={()=>setShowExportPanel(false)}
@@ -1023,13 +725,7 @@ export default function AgendaView({ planning, rdvParJourCalcule, agendaRdvs, se
       </div>
 
       {/* Grille */}
-      <div
-        ref={gridRef}
-        style={{ background:"white", border:"1px solid #DCD7CB", borderRadius:10, overflow:"hidden" }}
-        onDragOver={handleDragOver}
-        onDrop={handleDrop}
-      >
-        {/* En-têtes colonnes */}
+      <div ref={gridRef} style={{ background:"white", border:"1px solid #DCD7CB", borderRadius:10, overflow:"hidden" }} onDragOver={handleDragOver} onDrop={handleDrop}>
         <div style={{ display:"grid", gridTemplateColumns:`44px repeat(5,1fr)`, borderBottom:"1px solid #DCD7CB" }}>
           <div style={{ borderRight:"1px solid #DCD7CB" }}/>
           {jours.map((jour,i)=>(
@@ -1041,40 +737,28 @@ export default function AgendaView({ planning, rdvParJourCalcule, agendaRdvs, se
           ))}
         </div>
 
-        {/* Corps */}
         <div style={{ overflowY:"auto", maxHeight:700 }}>
           <div style={{ display:"grid", gridTemplateColumns:`44px repeat(5,1fr)` }}>
-            {/* Heures */}
             <div style={{ borderRight:"1px solid #DCD7CB" }}>
               {demiHeures.map(dmin=>{
-                const h = Math.floor(dmin/60);
-                const m = dmin%60;
+                const h = Math.floor(dmin/60); const m = dmin%60;
                 return (
                   <div key={dmin} style={{ height:HAUTEUR_HEURE/2, borderBottom: m===0 ? "1px solid #F0EDE7" : "1px dashed #F5F2EC", display:"flex", alignItems:"flex-start", padding:"2px 4px 0" }}>
-                    {m===0
-                      ? <span style={{ fontSize:10, color:"#8A93A0", marginTop:-5 }}>{h}h</span>
-                      : <span style={{ fontSize:9, color:"#C8C3BA", marginTop:-4 }}>30</span>
-                    }
+                    {m===0 ? <span style={{ fontSize:10, color:"#8A93A0", marginTop:-5 }}>{h}h</span> : <span style={{ fontSize:9, color:"#C8C3BA", marginTop:-4 }}>30</span>}
                   </div>
                 );
               })}
             </div>
 
-            {/* Colonnes jours */}
             {jours.map((jour,colIdx)=>{
               const dateKey = dateToKey(jour);
               const rdvs    = tousLesRdv(dateKey);
               const preview = dropPreview?.jour === dateKey ? dropPreview : null;
-
               return (
-                <div
-                  key={colIdx}
-                  ref={el => colRefs.current[colIdx] = el}
-                  style={{ position:"relative", borderRight:colIdx<4?"1px solid #DCD7CB":"none", height:HAUTEUR_HEURE*(HEURES_FIN-HEURES_DEBUT) }}
-                >
+                <div key={colIdx} ref={el => colRefs.current[colIdx] = el}
+                  style={{ position:"relative", borderRight:colIdx<4?"1px solid #DCD7CB":"none", height:HAUTEUR_HEURE*(HEURES_FIN-HEURES_DEBUT) }}>
                   {demiHeures.map(dmin=>{
-                    const h = Math.floor(dmin/60);
-                    const m = dmin%60;
+                    const h = Math.floor(dmin/60); const m = dmin%60;
                     const topPx = (dmin - HEURES_DEBUT*60)/60*HAUTEUR_HEURE;
                     const debutStr = `${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}`;
                     const finMin = dmin + 30;
@@ -1084,18 +768,11 @@ export default function AgendaView({ planning, rdvParJourCalcule, agendaRdvs, se
                         onClick={()=>setModalRdv({ rdv:{ jour:dateKey, debut:debutStr, fin:finStr, type:"rdv" }, isTournee:false })}/>
                     );
                   })}
-
                   {preview && (
-                    <div className="agenda-drop-preview" style={{
-                      top: (timeToMin(preview.debut) - HEURES_DEBUT*60)/60*HAUTEUR_HEURE,
-                      height: Math.max((timeToMin(preview.fin)-timeToMin(preview.debut))/60*HAUTEUR_HEURE, 22),
-                    }}>
-                      <div style={{ fontSize:10, padding:"2px 5px", color:"#E8714A", fontWeight:600 }}>
-                        {minToAff(timeToMin(preview.debut))} – {minToAff(timeToMin(preview.fin))}
-                      </div>
+                    <div className="agenda-drop-preview" style={{ top: (timeToMin(preview.debut) - HEURES_DEBUT*60)/60*HAUTEUR_HEURE, height: Math.max((timeToMin(preview.fin)-timeToMin(preview.debut))/60*HAUTEUR_HEURE, 22) }}>
+                      <div style={{ fontSize:10, padding:"2px 5px", color:"#E8714A", fontWeight:600 }}>{minToAff(timeToMin(preview.debut))} – {minToAff(timeToMin(preview.fin))}</div>
                     </div>
                   )}
-
                   {rdvs.map(rdv=>{
                     const startMin = timeToMin(rdv.debut);
                     const endMin   = timeToMin(rdv.fin);
@@ -1104,42 +781,18 @@ export default function AgendaView({ planning, rdvParJourCalcule, agendaRdvs, se
                     const c        = TYPE_COLORS[rdv.type] || TYPE_COLORS.rdv;
                     const draggable = rdv.type !== "google";
                     const isDragging = dragInfo?.rdv?.id === rdv.id;
-
                     return (
-                      <div
-                        key={rdv.id}
-                        draggable={draggable}
+                      <div key={rdv.id} draggable={draggable}
                         onDragStart={draggable ? (e)=>handleDragStart(e, rdv, rdv.isTournee) : undefined}
                         onDragEnd={handleDragEnd}
-                        onClick={e=>{
-                          e.stopPropagation();
-                          if (dragInfo) return;
-                          if (rdv.type === "google") return;
-                          setModalRdv({ rdv, isTournee: rdv.isTournee });
-                        }}
-                        style={{
-                          position:"absolute", left:2, right:2, top, height,
-                          background: isDragging ? "transparent" : c.bg,
-                          border: isDragging ? `2px dashed ${c.border}` : "none",
-                          borderLeft: isDragging ? `2px dashed ${c.border}` : `3px solid ${c.border}`,
-                          borderRadius:4, padding:"2px 5px",
-                          cursor: draggable ? "grab" : "default",
-                          overflow:"hidden", zIndex:2,
-                          opacity: isDragging ? 0.4 : 1,
-                          transition:"opacity 0.1s",
-                        }}
+                        onClick={e=>{ e.stopPropagation(); if (dragInfo) return; if (rdv.type === "google") return; setModalRdv({ rdv, isTournee: rdv.isTournee }); }}
+                        style={{ position:"absolute", left:2, right:2, top, height, background: isDragging ? "transparent" : c.bg, border: isDragging ? `2px dashed ${c.border}` : "none", borderLeft: isDragging ? `2px dashed ${c.border}` : `3px solid ${c.border}`, borderRadius:4, padding:"2px 5px", cursor: draggable ? "grab" : "default", overflow:"hidden", zIndex:2, opacity: isDragging ? 0.4 : 1 }}
                         onMouseEnter={e=>{ if(draggable && !isDragging) e.currentTarget.style.filter="brightness(0.94)"; }}
-                        onMouseLeave={e=>{ e.currentTarget.style.filter=""; }}
-                      >
+                        onMouseLeave={e=>{ e.currentTarget.style.filter=""; }}>
                         <div style={{ fontSize:10.5, fontWeight:600, color:c.text, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>
-                          {rdv.titre}
-                          {draggable && <span style={{ fontSize:9, opacity:0.5, marginLeft:4 }}>⠿</span>}
+                          {rdv.titre}{draggable && <span style={{ fontSize:9, opacity:0.5, marginLeft:4 }}>⠿</span>}
                         </div>
-                        {height>28 && (
-                          <div style={{ fontSize:9.5, color:c.text, opacity:0.8 }}>
-                            {minToAff(startMin)} – {minToAff(endMin)}
-                          </div>
-                        )}
+                        {height>28 && <div style={{ fontSize:9.5, color:c.text, opacity:0.8 }}>{minToAff(startMin)} – {minToAff(endMin)}</div>}
                       </div>
                     );
                   })}
@@ -1150,22 +803,13 @@ export default function AgendaView({ planning, rdvParJourCalcule, agendaRdvs, se
         </div>
       </div>
 
-      {/* Bouton + flottant */}
-      <button
-        onClick={()=>setModalRdv({ rdv:{ jour:dateToKey(new Date()), debut:"09:00", fin:"09:30", type:"rdv" }, isTournee:false })}
+      <button onClick={()=>setModalRdv({ rdv:{ jour:dateToKey(new Date()), debut:"09:00", fin:"09:30", type:"rdv" }, isTournee:false })}
         style={{ position:"fixed", bottom:24, right:24, width:48, height:48, borderRadius:"50%", background:"#E8714A", color:"white", border:"none", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", boxShadow:"0 4px 16px rgba(232,113,74,0.4)", zIndex:100 }}>
         <Plus size={22}/>
       </button>
 
       {modalRdv && (
-        <ModalRdv
-          rdv={modalRdv.rdv}
-          isTournee={modalRdv.isTournee}
-          onSave={sauvegarderRdv}
-          onDelete={supprimerRdv}
-          onClose={()=>setModalRdv(null)}
-          clients={clients}
-        />
+        <ModalRdv rdv={modalRdv.rdv} isTournee={modalRdv.isTournee} onSave={sauvegarderRdv} onDelete={supprimerRdv} onClose={()=>setModalRdv(null)} clients={clients}/>
       )}
     </div>
   );
