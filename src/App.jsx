@@ -731,8 +731,17 @@ function App({ code, onDeconnecter }) {
         const jourSemaine = cur.getDay();
         if (jourSemaine >= 1 && jourSemaine <= 5) {
           const dk = dateToKey(cur);
+          // Utiliser domicile si pas de départ défini
           ajouterDomicileSiAbsent(dk);
-          if (departsEtendus[dk] && !joursAvecDepart.includes(dk)) joursAvecDepart.push(dk);
+          // Inclure aussi les jours avec des RDV planifiés même sans départ explicite
+          const aDesRdv = (planning[dk] || []).length > 0;
+          if ((departsEtendus[dk] || aDesRdv) && !joursAvecDepart.includes(dk)) {
+            // Si le jour a des RDV mais pas de départ, ajouter domicile comme départ
+            if (aDesRdv && !departsEtendus[dk] && domicile) {
+              departsEtendus[dk] = { adresse: domicile.adresse, coords: domicile.coords, heure: domicile.heure || "08:30" };
+            }
+            if (departsEtendus[dk]) joursAvecDepart.push(dk);
+          }
         }
         cur.setDate(cur.getDate() + 1);
       }
