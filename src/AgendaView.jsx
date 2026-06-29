@@ -635,13 +635,16 @@ export default function AgendaView({ planning, rdvParJourCalcule, agendaRdvs, se
   function sauvegarderRdv(rdv) {
     setAgendaRdvs(prev => {
       let filtered = (prev || []).filter(r => {
-        if (rdv.overrideTournee) return !(r.overrideTournee === rdv.overrideTournee && r.jour === rdv.jour);
-        return r.id !== rdv.id;
+        // Supprimer l'entrée existante avec le même id
+        if (r.id === rdv.id) return false;
+        // Supprimer l'override existant pour le même client ce jour
+        if (rdv.overrideTournee && r.overrideTournee === rdv.overrideTournee && r.jour === rdv.jour) return false;
+        // Si RDV manuel avec clientId, supprimer tout override pour ce client ce jour
+        if (rdv.clientId && !rdv.overrideTournee && r.overrideTournee === rdv.clientId && r.jour === rdv.jour) return false;
+        // Si RDV manuel avec clientId, supprimer tout autre RDV manuel pour ce client ce jour
+        if (rdv.clientId && !rdv.overrideTournee && r.clientId === rdv.clientId && r.jour === rdv.jour && r.id !== rdv.id) return false;
+        return true;
       });
-      // Si le nouveau RDV est lié à un client, supprimer aussi l'éventuel override pour ce client ce jour
-      if (rdv.clientId && !rdv.overrideTournee) {
-        filtered = filtered.filter(r => !(r.overrideTournee === rdv.clientId && r.jour === rdv.jour));
-      }
       return [...filtered, rdv];
     });
     setModalRdv(null);
