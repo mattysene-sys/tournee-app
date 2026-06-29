@@ -334,7 +334,6 @@ function parseClientsWorkbook(workbook) {
       tel2: idx.tel2 !== -1 ? r[idx.tel2] || null : null,
       nbVisites: idx.nbVisites !== -1 ? Number(r[idx.nbVisites]) || 0 : 0,
       ciblage: idx.ciblage !== -1 ? r[idx.ciblage] || null : null,
-      // Lire les coordonnées pré-géocodées si présentes dans le fichier
       coords: (idx.latitude !== -1 && idx.longitude !== -1 && r[idx.latitude] && r[idx.longitude])
         ? { lat: parseFloat(r[idx.latitude]), lon: parseFloat(r[idx.longitude]) }
         : null,
@@ -552,7 +551,6 @@ function App({ code, onDeconnecter }) {
   const [toast, setToast] = useState(null);
   const [rdvAnnule, setRdvAnnule] = useState(null);
   const [planB, setPlanB] = useState(null);
-  // Créneau retenu en attente d'ajout agenda
   const [creneauRetenu, setCreneauRetenu] = useState(null);
   const fileInputRef = useRef(null);
 
@@ -620,7 +618,6 @@ function App({ code, onDeconnecter }) {
     );
   }
 
-  // Regéocoder uniquement les clients sans coordonnées
   const [regeoStatut, setRegeoStatut] = useState(null);
   async function regeocoder() {
     const sansCoords = clients.filter(c => !c.coords);
@@ -636,7 +633,6 @@ function App({ code, onDeconnecter }) {
     let fait = 0;
     for (const { cle, cp, ville, adresse } of aGeocoder) {
       try {
-        // Essayer d'abord avec l'adresse complète, puis juste CP+ville
         let coords = adresse ? await geocoder(`${adresse}, ${cp} ${ville}, France`) : null;
         if (!coords) coords = await geocoder(`${cp} ${ville}, France`);
         if (coords) cache[cle] = coords;
@@ -725,7 +721,6 @@ function App({ code, onDeconnecter }) {
       let cur = new Date(debut);
       while (cur <= fin) {
         const jourSemaine = cur.getDay();
-        // Strict: lundi(1) à vendredi(5) uniquement
         if (jourSemaine >= 1 && jourSemaine <= 5) {
           const dk = dateToKey(cur);
           ajouterDomicileSiAbsent(dk);
@@ -740,7 +735,6 @@ function App({ code, onDeconnecter }) {
       ajouterDomicileSiAbsent(mode.date);
       joursAvecDepart = Object.keys(departsEtendus).filter((d) => d === mode.date && departsEtendus[d].coords);
     } else if (mode.type === "semaine") {
-      // Ajouter le domicile sur tous les jours ouvrés de la semaine courante
       if (domicile) {
         const lundiCourant = new Date(aujourdHuiDate);
         const jourSem = lundiCourant.getDay();
@@ -754,15 +748,13 @@ function App({ code, onDeconnecter }) {
       }
       joursAvecDepart = Object.keys(departsEtendus).filter((d) => {
         const jour = new Date(d + "T00:00:00").getDay();
-        // Strict lun-ven uniquement
         return departsEtendus[d].coords && jour >= 1 && jour <= 5;
       });
     } else if (mode.type === "urgent") {
-      // Commencer au prochain jour ouvré (pas aujourd'hui si c'est un weekend)
       const debutUrgent = new Date(aujourdHuiDate);
       const jourUrgent = debutUrgent.getDay();
-      if (jourUrgent === 0) debutUrgent.setDate(debutUrgent.getDate() + 1); // dimanche → lundi
-      if (jourUrgent === 6) debutUrgent.setDate(debutUrgent.getDate() + 2); // samedi → lundi
+      if (jourUrgent === 0) debutUrgent.setDate(debutUrgent.getDate() + 1);
+      if (jourUrgent === 6) debutUrgent.setDate(debutUrgent.getDate() + 2);
       const fin = new Date(debutUrgent);
       fin.setDate(fin.getDate() + 21);
       ajouterFenetreJoursOuvres(joursAvecDepart, debutUrgent, fin);
@@ -799,7 +791,6 @@ function App({ code, onDeconnecter }) {
       }
       return;
     }
-    // Sécurité finale : éliminer tout jour non ouvré qui aurait pu passer
     joursAvecDepart = joursAvecDepart.filter(dk => estJourOuvre(dk));
 
     setCalcEnCours(true);
@@ -837,7 +828,6 @@ function App({ code, onDeconnecter }) {
         });
       }
     });
-    // Filtrer les créneaux avec coût excessif (> 60 min) sauf si pas d'autre choix
     const raisonnables = suggestionsParJour.filter(s => s.coutSupplementaire <= 60);
     const aUtiliser = raisonnables.length > 0 ? raisonnables : suggestionsParJour;
 
@@ -880,7 +870,6 @@ function App({ code, onDeconnecter }) {
     }));
     setClients((prev) => prev.map((c) => (c.id === clientSelectionne.id ? { ...c, prochainRdv: sugg.jour, statutRdv: "Fixe" } : c)));
     showToast(`${clientSelectionne.etablissement} placé le ${formatDateFr(sugg.jour)} à ${minToHHMM(sugg.arrivee)}`, "ok");
-    // Mémoriser le créneau retenu pour proposer l'ajout à l'agenda
     setCreneauRetenu({ client: clientSelectionne, sugg });
     setSuggestions(null);
     setClientSelectionne(null);
@@ -1024,6 +1013,7 @@ function App({ code, onDeconnecter }) {
         .tr-stop-line-name { flex: 1; font-weight: 600; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .tr-stop-line-trajet { color: var(--gris); font-size: 11px; white-space: nowrap; }
         .tr-stop-line-actions { display: flex; gap: 6px; align-items: center; flex-shrink: 0; }
+        .tr-stop-line-agenda { border-left: 3px solid var(--vert); padding-left: 8px; background: var(--vert-clair); border-radius: 0 6px 6px 0; }
         .tr-modal-overlay { position: fixed; inset: 0; background: rgba(28,38,48,0.55); display: flex; align-items: center; justify-content: center; z-index: 60; padding: 20px; }
         .tr-modal { background: white; border-radius: 12px; padding: 22px; max-width: 560px; width: 100%; max-height: 85vh; overflow-y: auto; }
         .tr-modal-head { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 14px; }
@@ -1079,7 +1069,6 @@ function App({ code, onDeconnecter }) {
               )}
               {erreur && <div className="tr-alert" style={{ marginTop: 14, marginBottom: 0 }}><AlertCircle size={16} style={{ flexShrink: 0, marginTop: 1 }} /><span>{erreur}</span></div>}
 
-              {/* Bloc regéocodage */}
               {clients.length > 0 && (() => {
                 const sansCoords = clients.filter(c => !c.coords).length;
                 return (
@@ -1212,7 +1201,6 @@ function App({ code, onDeconnecter }) {
               {erreur && <div className="tr-alert"><AlertCircle size={16} style={{ flexShrink: 0, marginTop: 1 }} /><span>{erreur}</span></div>}
               {calcEnCours && <div className="tr-card"><div className="tr-empty"><RefreshCw size={22} style={{ marginBottom: 8, opacity: 0.5 }} /><br />Recherche du meilleur créneau...</div></div>}
 
-              {/* BANDEAU CRÉNEAU RETENU + BOUTON AGENDA */}
               {creneauRetenu && !suggestions && !calcEnCours && (
                 <div className="tr-creneau-retenu">
                   <div className="tr-creneau-retenu-info">
@@ -1265,6 +1253,7 @@ function App({ code, onDeconnecter }) {
             domicile={domicile}
             definirDomicile={definirDomicile}
             appliquerDomicileAuJour={appliquerDomicileAuJour}
+            agendaRdvs={donnees.agendaRdvs || []}
           />
         )}
 
@@ -1322,7 +1311,7 @@ function App({ code, onDeconnecter }) {
 // ============================================================
 // Sous-composant : vue Semaine
 // ============================================================
-function SemaineView({ departs, definirDepartJour, rdvParJourCalcule, joursTries, ouvrirPlanB, domicile, definirDomicile, appliquerDomicileAuJour }) {
+function SemaineView({ departs, definirDepartJour, rdvParJourCalcule, joursTries, ouvrirPlanB, domicile, definirDomicile, appliquerDomicileAuJour, agendaRdvs }) {
   const [nouveauJour, setNouveauJour] = useState("");
   const [adresseInput, setAdresseInput] = useState("");
   const [heureInput, setHeureInput] = useState("08:30");
@@ -1331,7 +1320,10 @@ function SemaineView({ departs, definirDepartJour, rdvParJourCalcule, joursTries
   const [enregistrementDomicile, setEnregistrementDomicile] = useState(false);
 
   const aujourdHui = dateToKey(new Date());
-  const joursAffiches = Array.from(new Set([...joursTries, ...Object.keys(departs)])).sort();
+
+  // ── CORRECTION : inclure aussi les jours qui ont des RDV agenda ──
+  const joursAgenda = (agendaRdvs || []).map(r => r.date).filter(Boolean);
+  const joursAffiches = Array.from(new Set([...joursTries, ...Object.keys(departs), ...joursAgenda])).sort();
 
   function ajouterDepart() {
     if (!nouveauJour || !adresseInput.trim()) return;
@@ -1407,15 +1399,20 @@ function SemaineView({ departs, definirDepartJour, rdvParJourCalcule, joursTries
           joursAffiches.map((dateKey) => {
             const depart = departs[dateKey];
             const seq = rdvParJourCalcule[dateKey] || [];
+            // ── CORRECTION : RDV créés depuis l'Agenda pour ce jour ──
+            const rdvAgendaJour = (agendaRdvs || []).filter(r => r.date === dateKey);
+            const totalRdv = seq.length + rdvAgendaJour.length;
             return (
               <div className="tr-jour-block" key={dateKey}>
                 <div className="tr-jour-block-head">
                   <span>{formatDateFr(dateKey)}</span>
-                  <span>{seq.length} RDV{depart ? ` · départ ${depart.heure}` : ""}</span>
+                  <span>{totalRdv} RDV{depart ? ` · Départ ${depart.heure}` : ""}</span>
                 </div>
                 <div className="tr-jour-block-body">
-                  {!depart && <div style={{ fontSize: 12.5, color: "var(--gris)", padding: "6px 0" }}>Pas de point de départ défini pour ce jour</div>}
-                  {seq.length === 0 && depart && <div style={{ fontSize: 12.5, color: "var(--gris)", padding: "6px 0" }}>Aucun RDV ce jour</div>}
+                  {!depart && rdvAgendaJour.length === 0 && <div style={{ fontSize: 12.5, color: "var(--gris)", padding: "6px 0" }}>Pas de point de départ défini pour ce jour</div>}
+                  {seq.length === 0 && rdvAgendaJour.length === 0 && depart && <div style={{ fontSize: 12.5, color: "var(--gris)", padding: "6px 0" }}>Aucun RDV ce jour</div>}
+
+                  {/* Visites Tournée */}
                   {seq.map((item) => (
                     <div className="tr-stop-line" key={item.client.id}>
                       <span className="tr-pression-dot" style={{ background: PRESSION_COLOR[item.client.pression] || "var(--gris)" }}></span>
@@ -1423,7 +1420,6 @@ function SemaineView({ departs, definirDepartJour, rdvParJourCalcule, joursTries
                       <span className="tr-stop-line-name">{item.client.etablissement}</span>
                       <span className="tr-stop-line-trajet">{item.client.ville}</span>
                       <div className="tr-stop-line-actions">
-                        {/* Bouton Google Agenda sur chaque RDV de Ma semaine */}
                         <BoutonAgenda
                           pharmacie={item.client}
                           date={dateKey}
@@ -1436,6 +1432,30 @@ function SemaineView({ departs, definirDepartJour, rdvParJourCalcule, joursTries
                       </div>
                     </div>
                   ))}
+
+                  {/* ── CORRECTION : RDV créés depuis l'Agenda ── */}
+                  {rdvAgendaJour.map((r) => {
+                    const heureAffichee = r.startTime
+                      ? r.startTime.replace(":", "h")
+                      : r.start
+                        ? new Date(r.start).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" }).replace(":", "h")
+                        : "—";
+                    const titre = r.title || r.summary || "RDV Agenda";
+                    const isPersonnel = r.type === "personal" || r.source === "google";
+                    return (
+                      <div
+                        className="tr-stop-line tr-stop-line-agenda"
+                        key={r.id}
+                        style={{ borderLeftColor: isPersonnel ? "var(--gris)" : "var(--vert)" }}
+                      >
+                        <span className="tr-stop-line-time">{heureAffichee}</span>
+                        <span className="tr-stop-line-name">{titre}</span>
+                        <span className="tr-stop-line-trajet" style={{ color: isPersonnel ? "var(--gris)" : "var(--vert)", fontWeight: 600 }}>
+                          {isPersonnel ? "Personnel" : "Agenda"}
+                        </span>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             );
