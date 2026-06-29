@@ -521,7 +521,15 @@ function App({ code, onDeconnecter }) {
               planning: Object.keys(distant.planning || {}).length > 0 ? distant.planning : local.planning,
               departs: Object.keys(distant.departs || {}).length > 0 ? distant.departs : local.departs,
               domicile: distant.domicile || local.domicile || null,
-              agendaRdvs: (distant.agendaRdvs || []).length > 0 ? distant.agendaRdvs : (local.agendaRdvs || []),
+              agendaRdvs: (() => {
+                const d = distant.agendaRdvs || [];
+                const l = local.agendaRdvs || [];
+                // Fusionner : prendre la version locale si elle a plus de clientIds renseignés
+                const scoreD = d.filter(r => r.clientId).length;
+                const scoreL = l.filter(r => r.clientId).length;
+                if (scoreL > scoreD) return l;
+                return d.length > 0 ? d : l;
+              })(),
             };
           }
           if (!local.domicile && distant.domicile) {
