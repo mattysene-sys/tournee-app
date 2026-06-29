@@ -1212,6 +1212,7 @@ function App({ code, onDeconnecter }) {
                     date={creneauRetenu.sugg.jour}
                     heure={minToHHMMInput(creneauRetenu.sugg.arrivee)}
                     duree={creneauRetenu.client.dureeDefaut || 20}
+                    onSave={(rdv) => setAgendaRdvs((prev) => [...(prev || []), rdv])}
                   />
                 </div>
               )}
@@ -1254,6 +1255,7 @@ function App({ code, onDeconnecter }) {
             definirDomicile={definirDomicile}
             appliquerDomicileAuJour={appliquerDomicileAuJour}
             agendaRdvs={donnees.agendaRdvs || []}
+            setAgendaRdvs={setAgendaRdvs}
           />
         )}
 
@@ -1311,7 +1313,7 @@ function App({ code, onDeconnecter }) {
 // ============================================================
 // Sous-composant : vue Semaine
 // ============================================================
-function SemaineView({ departs, definirDepartJour, rdvParJourCalcule, joursTries, ouvrirPlanB, domicile, definirDomicile, appliquerDomicileAuJour, agendaRdvs }) {
+function SemaineView({ departs, definirDepartJour, rdvParJourCalcule, joursTries, ouvrirPlanB, domicile, definirDomicile, appliquerDomicileAuJour, agendaRdvs, setAgendaRdvs }) {
   const [nouveauJour, setNouveauJour] = useState("");
   const [adresseInput, setAdresseInput] = useState("");
   const [heureInput, setHeureInput] = useState("08:30");
@@ -1425,6 +1427,7 @@ function SemaineView({ departs, definirDepartJour, rdvParJourCalcule, joursTries
                           date={dateKey}
                           heure={minToHHMMInput(item.heureArrivee)}
                           duree={item.client.dureeDefaut || 20}
+                          onSave={(rdv) => setAgendaRdvs((prev) => [...(prev || []), rdv])}
                         />
                         <button className="tr-btn tr-btn-outline tr-btn-sm" onClick={() => ouvrirPlanB(dateKey, item)}>
                           <ShieldAlert size={12} /> Lapin
