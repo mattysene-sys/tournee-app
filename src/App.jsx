@@ -1430,7 +1430,10 @@ function SemaineView({ departs, definirDepartJour, rdvParJourCalcule, joursTries
             const depart = departs[dateKey];
             const seq = rdvParJourCalcule[dateKey] || [];
             // ── CORRECTION : RDV créés depuis l'Agenda pour ce jour ──
-            const rdvAgendaJour = (agendaRdvs || []).filter(r => r.jour === dateKey && !r.overrideTournee);
+            const clientIdsSeq = new Set(seq.map(item => item.client.id));
+            const rdvAgendaJour = (agendaRdvs || []).filter(r =>
+              r.jour === dateKey && !r.overrideTournee && !(r.clientId && clientIdsSeq.has(r.clientId))
+            );
             const totalRdv = seq.length + rdvAgendaJour.length;
             return (
               <div className="tr-jour-block" key={dateKey}>
