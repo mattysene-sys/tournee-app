@@ -48,7 +48,26 @@ export default function BoutonAgenda({ pharmacie, date, heure = '09:00', duree =
 
     const fin = calcFin(selectedHeure, selectedDuree);
 
-    // 1. Sauvegarder dans agendaRdvs (Ma semaine + synchro Supabase)
+    // 1. Envoyer vers Google Calendar d'abord pour récupérer l'eventId
+    let googleEventId = null;
+    try {
+      const event = await createEvent({
+        pharmacie,
+        date: selectedDate,
+        heure: selectedHeure,
+        duree: selectedDuree,
+        notes,
+      });
+      googleEventId = event?.id || null;
+      setStatut('ok');
+      setMessage('RDV ajouté ✓');
+      if (event.htmlLink) window.open(event.htmlLink, '_blank');
+    } catch (err) {
+      setStatut('erreur');
+      setMessage(err.message);
+    }
+
+    // 2. Sauvegarder dans agendaRdvs avec googleEventId
     if (onSave) {
       onSave({
         id: uid(),
@@ -59,26 +78,8 @@ export default function BoutonAgenda({ pharmacie, date, heure = '09:00', duree =
         fin,
         readOnly: false,
         clientId: pharmacie.id,
+        googleEventId,
       });
-    }
-
-    // 2. Envoyer vers Google Calendar
-    try {
-      const event = await createEvent({
-        pharmacie,
-        date: selectedDate,
-        heure: selectedHeure,
-        duree: selectedDuree,
-        notes,
-      });
-      setStatut('ok');
-      setMessage('RDV ajouté ✓');
-      if (event.htmlLink) {
-        window.open(event.htmlLink, '_blank');
-      }
-    } catch (err) {
-      setStatut('erreur');
-      setMessage(err.message);
     }
   };
 
