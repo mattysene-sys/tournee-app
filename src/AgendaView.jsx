@@ -232,14 +232,23 @@ function ModalRdv({ rdv, onSave, onDelete, onClose, isTournee, clients = [] }) {
           <button
             onClick={()=>{
               if (peutSauvegarder) {
+                // Chercher le client par nom si pas sélectionné explicitement
+                const clientParNom = !clientChoisi && titre.trim()
+                  ? clients.find(c => c.etablissement.toLowerCase() === titre.trim().toLowerCase())
+                  : null;
+                const clientIdFinal = clientChoisi
+                  ? clientChoisi.id
+                  : clientParNom
+                  ? clientParNom.id
+                  : undefined;
                 onSave({
                   id: rdv?.id || uid(),
                   titre: titreEffectif,
-                  type: isTournee ? "tournee" : (clientChoisi ? "tournee" : type),
+                  type: isTournee ? "tournee" : (clientChoisi || clientParNom ? "tournee" : type),
                   jour, debut, fin,
                   readOnly: false,
                   overrideTournee: isTournee ? rdv.clientId : undefined,
-                  clientId: clientChoisi ? clientChoisi.id : undefined,
+                  clientId: clientIdFinal,
                 });
               }
             }}
