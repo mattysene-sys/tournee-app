@@ -6,21 +6,33 @@ import { useGoogleCalendar } from '../hooks/useGoogleCalendar';
  * Bouton à placer sur une fiche pharmacie.
  *
  * Props :
- *   pharmacie  – objet client (mêmes champs que ta base : nom, etablissement,
- *                adresse, ville, cp, tel1, email, contact, ciblage, groupement)
- *   date       – string 'YYYY-MM-DD'  (optionnel, défaut = aujourd'hui)
+ *   pharmacie  – objet client
+ *   date       – string 'YYYY-MM-DD'
  *   heure      – string 'HH:MM'       (optionnel, défaut = '09:00')
  *   duree      – nombre de minutes    (optionnel, défaut = 30)
+ *   onSave     – callback(rdv) pour sauvegarder dans agendaRdvs (optionnel)
  */
-export default function BoutonAgenda({ pharmacie, date, heure = '09:00', duree = 30 }) {
+
+function uid() { return Math.random().toString(36).slice(2, 10); }
+
+export default function BoutonAgenda({ pharmacie, date, heure = '09:00', duree = 30, onSave }) {
   const { isReady, isLoading, error, authorize, createEvent } = useGoogleCalendar();
-  const [statut, setStatut] = useState(null); // null | 'ok' | 'erreur'
+  const [statut, setStatut] = useState(null);
   const [message, setMessage] = useState('');
   const [showModal, setShowModal] = useState(false);
   const [selectedDate, setSelectedDate] = useState(date || new Date().toISOString().split('T')[0]);
   const [selectedHeure, setSelectedHeure] = useState(heure);
   const [selectedDuree, setSelectedDuree] = useState(duree);
   const [notes, setNotes] = useState('');
+
+  // Calculer heure de fin
+  function calcFin(h, d) {
+    const [hh, mm] = h.split(':').map(Number);
+    const totalMin = hh * 60 + mm + d;
+    const fh = Math.floor(totalMin / 60) % 24;
+    const fm = totalMin % 60;
+    return `${String(fh).padStart(2, '0')}:${String(fm).padStart(2, '0')}`;
+  }
 
   const handleClick = async () => {
     if (!isReady) {
@@ -33,6 +45,24 @@ export default function BoutonAgenda({ pharmacie, date, heure = '09:00', duree =
   const handleConfirm = async () => {
     setShowModal(false);
     setStatut(null);
+
+    const fin = calcFin(selectedHeure, selectedDuree);
+
+    // 1. Sauvegarder dans agendaRdvs (Ma semaine + synchro Supabase)
+    if (onSave) {
+      onSave({
+        id: uid(),
+        titre: pharmacie.etablissement || pharmacie.nom,
+        type: 'tournee',
+        jour: selectedDate,
+        debut: selectedHeure,
+        fin,
+        readOnly: false,
+        clientId: pharmacie.id,
+      });
+    }
+
+    // 2. Envoyer vers Google Calendar
     try {
       const event = await createEvent({
         pharmacie,
@@ -42,8 +72,7 @@ export default function BoutonAgenda({ pharmacie, date, heure = '09:00', duree =
         notes,
       });
       setStatut('ok');
-      setMessage(`RDV ajouté ✓`);
-      // Lien direct vers l'événement
+      setMessage('RDV ajouté ✓');
       if (event.htmlLink) {
         window.open(event.htmlLink, '_blank');
       }
@@ -55,7 +84,6 @@ export default function BoutonAgenda({ pharmacie, date, heure = '09:00', duree =
 
   return (
     <>
-      {/* Bouton principal */}
       <button
         onClick={handleClick}
         disabled={isLoading}
@@ -70,27 +98,15 @@ export default function BoutonAgenda({ pharmacie, date, heure = '09:00', duree =
           : 'Connecter Google Agenda'}
       </button>
 
-      {/* Feedback statut */}
-      {statut === 'ok' && (
-        <span style={styles.feedback('#16a34a')}>{message}</span>
-      )}
-      {statut === 'erreur' && (
-        <span style={styles.feedback('#dc2626')}>{message}</span>
-      )}
-      {error && (
-        <span style={styles.feedback('#dc2626')}>Erreur : {error}</span>
-      )}
+      {statut === 'ok' && <span style={styles.feedback('#16a34a')}>{message}</span>}
+      {statut === 'erreur' && <span style={styles.feedback('#dc2626')}>{message}</span>}
+      {error && <span style={styles.feedback('#dc2626')}>Erreur : {error}</span>}
 
-      {/* Modal de saisie du RDV */}
       {showModal && (
         <div style={styles.overlay}>
           <div style={styles.modal}>
-            <h3 style={styles.modalTitre}>
-              📅 Planifier une visite
-            </h3>
-            <p style={styles.modalSousTitre}>
-              {pharmacie.etablissement || pharmacie.nom}
-            </p>
+            <h3 style={styles.modalTitre}>📅 Planifier une visite</h3>
+            <p style={styles.modalSousTitre}>{pharmacie.etablissement || pharmacie.nom}</p>
 
             <label style={styles.label}>Date</label>
             <input
@@ -100,7 +116,7 @@ export default function BoutonAgenda({ pharmacie, date, heure = '09:00', duree =
               style={styles.input}
             />
 
-            <label style={styles.label}>Heure</label>
+            <label style={styles.label}>Heure de début</label>
             <input
               type="time"
               value={selectedHeure}
@@ -108,24 +124,30 @@ export default function BoutonAgenda({ pharmacie, date, heure = '09:00', duree =
               style={styles.input}
             />
 
-            <label style={styles.label}>Durée (minutes)</label>
+            <label style={styles.label}>Durée</label>
             <select
               value={selectedDuree}
               onChange={(e) => setSelectedDuree(Number(e.target.value))}
               style={styles.input}
             >
               <option value={15}>15 min</option>
+              <option value={20}>20 min</option>
               <option value={30}>30 min</option>
               <option value={45}>45 min</option>
               <option value={60}>1h</option>
             </select>
+
+            {/* Aperçu heure de fin */}
+            <div style={{ fontSize: 12, color: '#8A93A0', marginBottom: 8 }}>
+              Fin prévue : {calcFin(selectedHeure, selectedDuree).replace(':', 'h')}
+            </div>
 
             <label style={styles.label}>Notes (optionnel)</label>
             <textarea
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
               placeholder="Objectifs, produits à présenter..."
-              style={{ ...styles.input, height: '70px', resize: 'vertical' }}
+              style={{ ...styles.input, height: '60px', resize: 'vertical' }}
             />
 
             <div style={styles.modalBoutons}>
@@ -133,7 +155,7 @@ export default function BoutonAgenda({ pharmacie, date, heure = '09:00', duree =
                 Annuler
               </button>
               <button onClick={handleConfirm} style={styles.btnConfirmer}>
-                Ajouter au calendrier
+                Enregistrer + Google Agenda
               </button>
             </div>
           </div>
@@ -148,16 +170,17 @@ const styles = {
     display: 'inline-flex',
     alignItems: 'center',
     gap: '6px',
-    padding: '8px 14px',
+    padding: '6px 12px',
     borderRadius: '8px',
     border: 'none',
     cursor: isLoading ? 'wait' : 'pointer',
-    fontSize: '13px',
+    fontSize: '12px',
     fontWeight: '600',
     backgroundColor: isReady ? '#1a73e8' : '#f1f3f4',
     color: isReady ? '#fff' : '#444',
     transition: 'all 0.2s',
     opacity: isLoading ? 0.7 : 1,
+    whiteSpace: 'nowrap',
   }),
   feedback: (couleur) => ({
     display: 'inline-block',
@@ -183,25 +206,26 @@ const styles = {
     boxShadow: '0 20px 60px rgba(0,0,0,0.3)',
     display: 'flex',
     flexDirection: 'column',
-    gap: '8px',
+    gap: '6px',
   },
   modalTitre: {
     margin: 0,
-    fontSize: '18px',
+    fontSize: '17px',
     fontWeight: '700',
     color: '#1a1a1a',
   },
   modalSousTitre: {
-    margin: '0 0 8px',
+    margin: '0 0 6px',
     fontSize: '13px',
     color: '#666',
     fontWeight: '500',
   },
   label: {
-    fontSize: '12px',
+    fontSize: '11px',
     fontWeight: '600',
     color: '#555',
-    marginBottom: '2px',
+    textTransform: 'uppercase',
+    letterSpacing: '0.05em',
   },
   input: {
     width: '100%',
@@ -211,12 +235,12 @@ const styles = {
     fontSize: '14px',
     outline: 'none',
     boxSizing: 'border-box',
-    marginBottom: '4px',
+    marginBottom: '2px',
   },
   modalBoutons: {
     display: 'flex',
     gap: '8px',
-    marginTop: '8px',
+    marginTop: '10px',
   },
   btnAnnuler: {
     flex: 1,
