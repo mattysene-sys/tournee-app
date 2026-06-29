@@ -1,10 +1,10 @@
-import React, { useState, useRef, useCallback } from "react";
 import { ChevronLeft, ChevronRight, Plus, X, Calendar, RefreshCw, CheckCircle2, Clock, Send } from "lucide-react";
 import { useGoogleCalendar } from "./hooks/useGoogleCalendar";
 
 const HEURES_DEBUT = 8;
 const HEURES_FIN = 19;
-const HAUTEUR_HEURE = 72;
+const HAimport React, { useState, useRef, useCallback } from "react";
+UTEUR_HEURE = 72;
 const JOURS_SEMAINE = ["Lun", "Mar", "Mer", "Jeu", "Ven"];
 
 const TYPE_COLORS = {
@@ -372,28 +372,61 @@ function PanneauExport({ rdvParJourCalcule, agendaRdvs, totalRdvPlanifies, isRea
     });
   });
 
-  // 2. RDV créés manuellement depuis l'Agenda (tous types, pas overrideTournee)
+  // 2. Tous les RDV agenda non encore couverts par rdvParJourCalcule
   const clientsById = {};
   (clients || []).forEach(c => { clientsById[c.id] = c; });
-  (agendaRdvs || []).filter(r => !r.overrideTournee).forEach(r => {
+
+  (agendaRdvs || []).forEach(r => {
     const key = `agenda|${r.id}`;
-    // Éviter les doublons : si un RDV Tournée existe déjà pour ce client ce jour, ignorer
+
+    if (r.overrideTournee) {
+      // Override : le client est dans rdvParJourCalcule si GPS dispo, sinon orphelin
+      const dejaCouvert = tousRdvs.some(x =>
+        x.client.id === r.overrideTournee && x.date === r.jour
+      );
+      if (dejaCouvert) {
+        // Mettre à jour l'heure avec l'override déjà inséré dans bloc 1
+        const existing = tousRdvs.find(x =>
+          x.client.id === r.overrideTournee && x.date === r.jour
+        );
+        if (existing) {
+          existing.debut = r.debut;
+          existing.fin = r.fin;
+          existing.duree = timeToMin(r.fin) - timeToMin(r.debut);
+        }
+        return;
+      }
+      // Override orphelin (client sans GPS) → ajouter quand même
+      const client = clientsById[r.overrideTournee] || {
+        id: r.overrideTournee,
+        etablissement: r.titre || "RDV",
+        nom: r.titre || "RDV",
+        ville: "", adresse: "", cp: "",
+        tel1: null, email: null, contact: null,
+        ciblage: null, groupement: null,
+      };
+      tousRdvs.push({
+        key,
+        client,
+        date: r.jour,
+        debut: r.debut,
+        fin: r.fin,
+        duree: timeToMin(r.fin) - timeToMin(r.debut),
+      });
+      return;
+    }
+
+    // RDV manuel (pas d'override)
     if (r.clientId && tousRdvs.some(x => x.client.id === r.clientId && x.date === r.jour)) return;
     if (tousRdvs.some(x => x.key === key)) return;
     const client = r.clientId ? clientsById[r.clientId] : null;
-    // Construire un faux objet client si pas trouvé (titre libre)
     const clientEffectif = client || {
       id: r.id,
       etablissement: r.titre || "RDV",
       nom: r.titre || "RDV",
-      ville: "",
-      adresse: "",
-      cp: "",
-      tel1: null,
-      email: null,
-      contact: null,
-      ciblage: null,
-      groupement: null,
+      ville: "", adresse: "", cp: "",
+      tel1: null, email: null, contact: null,
+      ciblage: null, groupement: null,
     };
     tousRdvs.push({
       key,
@@ -561,7 +594,7 @@ export default function AgendaView({ planning, rdvParJourCalcule, agendaRdvs, se
   // ── Hook Google partagé ──
   const { isReady, authorize, createEvent } = useGoogleCalendar();
 
-  const totalRdvPlanifies = Object.values(rdvParJourCalcule).reduce((acc, items) => acc + items.length, 0) + (agendaRdvs || []).filter(r => !r.overrideTournee).length;
+  const totalRdvPlanifies = Object.values(rdvParJourCalcule).reduce((acc, items) => acc + items.length, 0) + (agendaRdvs || []).filter(r => !r.overrideTournee).length + (agendaRdvs || []).filter(r => r.overrideTournee && !Object.values(rdvParJourCalcule).flat().some(x => x.client.id === r.overrideTournee)).length;
 
   const lundi  = getLundi(semaineOffset);
   const jours  = Array.from({length:5},(_,i)=>{ const d=new Date(lundi); d.setDate(lundi.getDate()+i); return d; });
