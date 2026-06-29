@@ -354,7 +354,7 @@ function PanneauGoogle({ googleEvents, onImport, onClear }) {
 }
 
 // ─── Panneau Export ───────────────────────────────────────────────────────────
-function PanneauExport({ rdvParJourCalcule, agendaRdvs, totalRdvPlanifies, isReady, authorize, createEvent, onClose, clients }) {
+function PanneauExport({ rdvParJourCalcule, agendaRdvs, totalRdvPlanifies, isReady, authorize, createEvent, onClose, clients, onEventCreated }) {
   const [recherche, setRecherche] = useState("");
   const [selectionIds, setSelectionIds] = useState(new Set());
   const [statut, setStatut] = useState(null);
@@ -599,7 +599,7 @@ export default function AgendaView({ planning, rdvParJourCalcule, agendaRdvs, se
   const colRefs                           = useRef([]);
 
   // ── Hook Google partagé ──
-  const { isReady, authorize, createEvent } = useGoogleCalendar();
+  const { isReady, authorize, createEvent, updateEvent, deleteEvent } = useGoogleCalendar();
 
   const totalRdvPlanifies = Object.values(rdvParJourCalcule).reduce((acc, items) => acc + items.length, 0) + (agendaRdvs || []).filter(r => !r.overrideTournee).length + (agendaRdvs || []).filter(r => r.overrideTournee && !Object.values(rdvParJourCalcule).flat().some(x => x.client.id === r.overrideTournee)).length;
 
@@ -641,25 +641,44 @@ export default function AgendaView({ planning, rdvParJourCalcule, agendaRdvs, se
     ];
   }
 
-  function sauvegarderRdv(rdv) {
+  async function sauvegarderRdv(rdv) {
+    // Récupérer l'ancien RDV pour savoir si on a un googleEventId à mettre à jour
+    const ancienRdv = (agendaRdvs || []).find(r => r.id === rdv.id);
+    const googleEventId = rdv.googleEventId || ancienRdv?.googleEventId;
+
     setAgendaRdvs(prev => {
       let filtered = (prev || []).filter(r => {
-        // Supprimer l'entrée existante avec le même id
         if (r.id === rdv.id) return false;
-        // Supprimer l'override existant pour le même client ce jour
         if (rdv.overrideTournee && r.overrideTournee === rdv.overrideTournee && r.jour === rdv.jour) return false;
-        // Si RDV manuel avec clientId, supprimer tout override pour ce client ce jour
         if (rdv.clientId && !rdv.overrideTournee && r.overrideTournee === rdv.clientId && r.jour === rdv.jour) return false;
-        // Si RDV manuel avec clientId, supprimer tout autre RDV manuel pour ce client ce jour
         if (rdv.clientId && !rdv.overrideTournee && r.clientId === rdv.clientId && r.jour === rdv.jour && r.id !== rdv.id) return false;
         return true;
       });
-      return [...filtered, rdv];
+      return [...filtered, { ...rdv, googleEventId }];
     });
+
+    // Mettre à jour dans Google Agenda si connecté et eventId connu
+    if (isReady && googleEventId && updateEvent) {
+      try {
+        const client = rdv.clientId ? (clients || []).find(c => c.id === rdv.clientId) : null;
+        await updateEvent({
+          eventId: googleEventId,
+          pharmacie: client || { etablissement: rdv.titre, nom: rdv.titre, ville: '', adresse: '', cp: '', tel1: null, email: null, contact: null, ciblage: null, groupement: null },
+          date: rdv.jour,
+          heure: rdv.debut,
+          duree: (() => { const [h1,m1] = rdv.debut.split(':').map(Number); const [h2,m2] = rdv.fin.split(':').map(Number); return (h2*60+m2)-(h1*60+m1); })(),
+        });
+      } catch(e) { console.warn('Google update failed:', e.message); }
+    }
     setModalRdv(null);
   }
 
-  function supprimerRdv(id, rdv) {
+  async function supprimerRdv(id, rdv) {
+    // Supprimer de Google Agenda si eventId connu
+    const googleEventId = rdv?.googleEventId;
+    if (isReady && googleEventId && deleteEvent) {
+      try { await deleteEvent(googleEventId); } catch(e) { console.warn('Google delete failed:', e.message); }
+    }
     if (id.startsWith("t-")) {
       const clientId = id.replace("t-","");
       setAgendaRdvs(prev => (prev||[]).filter(r => !(r.overrideTournee === clientId)));
@@ -790,6 +809,11 @@ export default function AgendaView({ planning, rdvParJourCalcule, agendaRdvs, se
           createEvent={createEvent}
           onClose={()=>setShowExportPanel(false)}
           clients={clients}
+          onEventCreated={(key, googleEventId) => {
+            setAgendaRdvs(prev => (prev||[]).map(r =>
+              (`agenda|${r.id}` === key) ? {...r, googleEventId} : r
+            ));
+          }}
         />
       )}
 
