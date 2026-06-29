@@ -1322,7 +1322,7 @@ function SemaineView({ departs, definirDepartJour, rdvParJourCalcule, joursTries
   const aujourdHui = dateToKey(new Date());
 
   // ── CORRECTION : inclure aussi les jours qui ont des RDV agenda ──
-  const joursAgenda = (agendaRdvs || []).map(r => r.date).filter(Boolean);
+  const joursAgenda = (agendaRdvs || []).map(r => r.jour).filter(Boolean);
   const joursAffiches = Array.from(new Set([...joursTries, ...Object.keys(departs), ...joursAgenda])).sort();
 
   function ajouterDepart() {
@@ -1400,7 +1400,7 @@ function SemaineView({ departs, definirDepartJour, rdvParJourCalcule, joursTries
             const depart = departs[dateKey];
             const seq = rdvParJourCalcule[dateKey] || [];
             // ── CORRECTION : RDV créés depuis l'Agenda pour ce jour ──
-            const rdvAgendaJour = (agendaRdvs || []).filter(r => r.date === dateKey);
+            const rdvAgendaJour = (agendaRdvs || []).filter(r => r.jour === dateKey && !r.overrideTournee);
             const totalRdv = seq.length + rdvAgendaJour.length;
             return (
               <div className="tr-jour-block" key={dateKey}>
@@ -1435,12 +1435,10 @@ function SemaineView({ departs, definirDepartJour, rdvParJourCalcule, joursTries
 
                   {/* ── CORRECTION : RDV créés depuis l'Agenda ── */}
                   {rdvAgendaJour.map((r) => {
-                    const heureAffichee = r.startTime
-                      ? r.startTime.replace(":", "h")
-                      : r.start
-                        ? new Date(r.start).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" }).replace(":", "h")
-                        : "—";
-                    const titre = r.title || r.summary || "RDV Agenda";
+                    const heureAffichee = r.debut
+                      ? r.debut.replace(":", "h")
+                      : "—";
+                    const titre = r.titre || "RDV Agenda";
                     const isPersonnel = r.type === "personal" || r.source === "google";
                     return (
                       <div
