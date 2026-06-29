@@ -1,10 +1,10 @@
+import React, { useState, useRef, useCallback } from "react";
 import { ChevronLeft, ChevronRight, Plus, X, Calendar, RefreshCw, CheckCircle2, Clock, Send } from "lucide-react";
 import { useGoogleCalendar } from "./hooks/useGoogleCalendar";
 
 const HEURES_DEBUT = 8;
 const HEURES_FIN = 19;
-const HAimport React, { useState, useRef, useCallback } from "react";
-UTEUR_HEURE = 72;
+const HAUTEUR_HEURE = 72;
 const JOURS_SEMAINE = ["Lun", "Mar", "Mer", "Jeu", "Ven"];
 
 const TYPE_COLORS = {
