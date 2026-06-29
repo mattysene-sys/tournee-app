@@ -376,27 +376,32 @@ function PanneauExport({ rdvParJourCalcule, agendaRdvs, totalRdvPlanifies, isRea
   const clientsById = {};
   (clients || []).forEach(c => { clientsById[c.id] = c; });
 
-  (agendaRdvs || []).forEach(r => {
+  // Trier : RDV manuels (sans overrideTournee) en premier, overrides ensuite
+  const rdvsTries = [...(agendaRdvs || [])].sort((a, b) => {
+    if (!a.overrideTournee && b.overrideTournee) return -1;
+    if (a.overrideTournee && !b.overrideTournee) return 1;
+    return 0;
+  });
+
+  rdvsTries.forEach(r => {
     const key = `agenda|${r.id}`;
 
     if (r.overrideTournee) {
-      // Override : le client est dans rdvParJourCalcule si GPS dispo, sinon orphelin
-      const dejaCouvert = tousRdvs.some(x =>
+      // Override : mettre à jour l'heure si le client est déjà dans la liste
+      const existing = tousRdvs.find(x =>
         x.client.id === r.overrideTournee && x.date === r.jour
       );
-      if (dejaCouvert) {
-        // Mettre à jour l'heure avec l'override déjà inséré dans bloc 1
-        const existing = tousRdvs.find(x =>
-          x.client.id === r.overrideTournee && x.date === r.jour
-        );
-        if (existing) {
-          existing.debut = r.debut;
-          existing.fin = r.fin;
-          existing.duree = timeToMin(r.fin) - timeToMin(r.debut);
-        }
+      if (existing) {
+        existing.debut = r.debut;
+        existing.fin = r.fin;
+        existing.duree = timeToMin(r.fin) - timeToMin(r.debut);
         return;
       }
-      // Override orphelin (client sans GPS) → ajouter quand même
+      // Override orphelin (client sans GPS et pas de RDV manuel pour ce client ce jour)
+      const dejaManuel = tousRdvs.some(x =>
+        x.client.id === r.overrideTournee && x.date === r.jour
+      );
+      if (dejaManuel) return;
       const client = clientsById[r.overrideTournee] || {
         id: r.overrideTournee,
         etablissement: r.titre || "RDV",
@@ -406,18 +411,14 @@ function PanneauExport({ rdvParJourCalcule, agendaRdvs, totalRdvPlanifies, isRea
         ciblage: null, groupement: null,
       };
       tousRdvs.push({
-        key,
-        client,
-        date: r.jour,
-        debut: r.debut,
-        fin: r.fin,
+        key, client, date: r.jour,
+        debut: r.debut, fin: r.fin,
         duree: timeToMin(r.fin) - timeToMin(r.debut),
       });
       return;
     }
 
-    // RDV manuel (pas d'override)
-    if (r.clientId && tousRdvs.some(x => x.client.id === r.clientId && x.date === r.jour)) return;
+    // RDV manuel (pas d'override) — prioritaire
     if (tousRdvs.some(x => x.key === key)) return;
     const client = r.clientId ? clientsById[r.clientId] : null;
     const clientEffectif = client || {
@@ -429,11 +430,8 @@ function PanneauExport({ rdvParJourCalcule, agendaRdvs, totalRdvPlanifies, isRea
       ciblage: null, groupement: null,
     };
     tousRdvs.push({
-      key,
-      client: clientEffectif,
-      date: r.jour,
-      debut: r.debut,
-      fin: r.fin,
+      key, client: clientEffectif, date: r.jour,
+      debut: r.debut, fin: r.fin,
       duree: timeToMin(r.fin) - timeToMin(r.debut),
     });
   });
@@ -636,10 +634,14 @@ export default function AgendaView({ planning, rdvParJourCalcule, agendaRdvs, se
 
   function sauvegarderRdv(rdv) {
     setAgendaRdvs(prev => {
-      const filtered = (prev || []).filter(r => {
+      let filtered = (prev || []).filter(r => {
         if (rdv.overrideTournee) return !(r.overrideTournee === rdv.overrideTournee && r.jour === rdv.jour);
         return r.id !== rdv.id;
       });
+      // Si le nouveau RDV est lié à un client, supprimer aussi l'éventuel override pour ce client ce jour
+      if (rdv.clientId && !rdv.overrideTournee) {
+        filtered = filtered.filter(r => !(r.overrideTournee === rdv.clientId && r.jour === rdv.jour));
+      }
       return [...filtered, rdv];
     });
     setModalRdv(null);
