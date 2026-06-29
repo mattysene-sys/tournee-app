@@ -733,10 +733,11 @@ function App({ code, onDeconnecter }) {
           const dk = dateToKey(cur);
           // Utiliser domicile si pas de départ défini
           ajouterDomicileSiAbsent(dk);
-          // Inclure aussi les jours avec des RDV planifiés même sans départ explicite
-          const aDesRdv = (planning[dk] || []).length > 0;
+          // Inclure les jours avec RDV dans planning OU dans agendaRdvs
+          const aDesRdvPlanning = (planning[dk] || []).length > 0;
+          const aDesRdvAgenda = (donnees.agendaRdvs || []).some(r => r.jour === dk);
+          const aDesRdv = aDesRdvPlanning || aDesRdvAgenda;
           if ((departsEtendus[dk] || aDesRdv) && !joursAvecDepart.includes(dk)) {
-            // Si le jour a des RDV mais pas de départ, ajouter domicile comme départ
             if (aDesRdv && !departsEtendus[dk] && domicile) {
               departsEtendus[dk] = { adresse: domicile.adresse, coords: domicile.coords, heure: domicile.heure || "08:30" };
             }
@@ -819,7 +820,21 @@ function App({ code, onDeconnecter }) {
     const suggestionsParJour = [];
     joursAvecDepart.forEach((jourKey) => {
       const depart = departsEtendus[jourKey];
-      const rdvJour = (rdvParJour[jourKey] || []).slice().sort((a, b) => a.heureArrivee - b.heureArrivee);
+      const rdvJour = (rdvParJour[jourKey] || []).slice();
+      // Ajouter aussi les RDV agenda de ce jour (non-override) dans la séquence
+      const rdvAgendaJour = (donnees.agendaRdvs || []).filter(r => r.jour === jourKey && !r.overrideTournee);
+      rdvAgendaJour.forEach(r => {
+        const clientAgenda = r.clientId ? clientsById[r.clientId] : null;
+        if (clientAgenda && clientAgenda.coords) {
+          rdvJour.push({
+            client: clientAgenda,
+            coords: clientAgenda.coords,
+            heureArrivee: hhmmToMin(r.debut),
+            fin: hhmmToMin(r.fin),
+          });
+        }
+      });
+      rdvJour.sort((a, b) => a.heureArrivee - b.heureArrivee);
       const sequence = [{ isDepart: true, coords: depart.coords, fin: hhmmToMin(depart.heure || "08:30") }, ...rdvJour];
       for (let i = 0; i < sequence.length; i++) {
         const prev = sequence[i];
