@@ -828,11 +828,16 @@ function App({ code, onDeconnecter }) {
         });
       }
     });
-    const raisonnables = suggestionsParJour.filter(s => s.coutSupplementaire <= 60);
-    const aUtiliser = raisonnables.length > 0 ? raisonnables : suggestionsParJour;
+    // Filtrage par paliers : idéal ≤20 min de détour, acceptable ≤45 min, sinon tout
+    const ideal      = suggestionsParJour.filter(s => s.coutSupplementaire <= 20);
+    const acceptable = suggestionsParJour.filter(s => s.coutSupplementaire <= 45);
+    const aUtiliser  = ideal.length > 0 ? ideal : acceptable.length > 0 ? acceptable : suggestionsParJour;
 
     if (mode.type === "urgent") {
-      aUtiliser.sort((a, b) => { if (a.jour !== b.jour) return a.jour < b.jour ? -1 : 1; return a.coutSupplementaire - b.coutSupplementaire; });
+      aUtiliser.sort((a, b) => {
+        if (a.jour !== b.jour) return a.jour < b.jour ? -1 : 1;
+        return a.coutSupplementaire - b.coutSupplementaire;
+      });
     } else if (mode.type === "suivi" && dateCibleSuivi) {
       const cibleTime = dateCibleSuivi.getTime();
       aUtiliser.sort((a, b) => {
@@ -846,7 +851,9 @@ function App({ code, onDeconnecter }) {
     }
     setCalcEnCours(false);
     if (aUtiliser.length === 0) {
-      setErreur(mode.type === "semaine" ? "Aucun créneau ne convient sur les jours actuellement planifiés. Vérifie que ton domicile est bien défini dans « Ma semaine »." : "Aucun créneau ne convient sur la période choisie.");
+      setErreur(mode.type === "semaine"
+        ? "Aucun créneau ne convient sur les jours actuellement planifiés. Vérifie que ton domicile est bien défini dans « Ma semaine »."
+        : "Aucun créneau ne convient sur la période choisie.");
       return;
     }
     setClientSelectionne(client);
@@ -875,6 +882,25 @@ function App({ code, onDeconnecter }) {
     setClientSelectionne(null);
   }
 
+
+  function supprimerVisite(dateKey, clientId) {
+    setPlanning((p) => {
+      const np = { ...p };
+      if (np[dateKey]) {
+        np[dateKey] = np[dateKey].filter((r) => r.clientId !== clientId);
+        if (np[dateKey].length === 0) delete np[dateKey];
+      }
+      return np;
+    });
+    setAgendaRdvs((prev) => (prev || []).filter((r) => !(r.overrideTournee === clientId && r.jour === dateKey)));
+    setClients((prev) => prev.map((c) => c.id === clientId ? { ...c, prochainRdv: null, statutRdv: null } : c));
+    showToast("Visite supprimée", "ok");
+  }
+
+  function supprimerRdvAgenda(id) {
+    setAgendaRdvs((prev) => (prev || []).filter((r) => r.id !== id));
+    showToast("RDV supprimé", "ok");
+  }
   async function definirDomicile(adresseTexte, heure) {
     try {
       const coords = await geocoder(adresseTexte + ", France");
@@ -1256,6 +1282,8 @@ function App({ code, onDeconnecter }) {
             appliquerDomicileAuJour={appliquerDomicileAuJour}
             agendaRdvs={donnees.agendaRdvs || []}
             setAgendaRdvs={setAgendaRdvs}
+            supprimerVisite={supprimerVisite}
+            supprimerRdvAgenda={supprimerRdvAgenda}
           />
         )}
 
@@ -1313,7 +1341,7 @@ function App({ code, onDeconnecter }) {
 // ============================================================
 // Sous-composant : vue Semaine
 // ============================================================
-function SemaineView({ departs, definirDepartJour, rdvParJourCalcule, joursTries, ouvrirPlanB, domicile, definirDomicile, appliquerDomicileAuJour, agendaRdvs, setAgendaRdvs }) {
+function SemaineView({ departs, definirDepartJour, rdvParJourCalcule, joursTries, ouvrirPlanB, domicile, definirDomicile, appliquerDomicileAuJour, agendaRdvs, setAgendaRdvs, supprimerVisite, supprimerRdvAgenda }) {
   const [nouveauJour, setNouveauJour] = useState("");
   const [adresseInput, setAdresseInput] = useState("");
   const [heureInput, setHeureInput] = useState("08:30");
@@ -1415,26 +1443,37 @@ function SemaineView({ departs, definirDepartJour, rdvParJourCalcule, joursTries
                   {seq.length === 0 && rdvAgendaJour.length === 0 && depart && <div style={{ fontSize: 12.5, color: "var(--gris)", padding: "6px 0" }}>Aucun RDV ce jour</div>}
 
                   {/* Visites Tournée */}
-                  {seq.map((item) => (
+                  {seq.map((item) => {
+                    // Vérifier si un override agenda existe pour ce RDV
+                    const override = (agendaRdvs || []).find(r => r.overrideTournee === item.client.id && r.jour === dateKey);
+                    const heureAff = override ? override.debut.replace(":", "h") : minToHHMM(item.heureArrivee);
+                    const heureInput = override ? override.debut : minToHHMMInput(item.heureArrivee);
+                    return (
                     <div className="tr-stop-line" key={item.client.id}>
                       <span className="tr-pression-dot" style={{ background: PRESSION_COLOR[item.client.pression] || "var(--gris)" }}></span>
-                      <span className="tr-stop-line-time">{minToHHMM(item.heureArrivee)}</span>
+                      <span className="tr-stop-line-time">{heureAff}</span>
                       <span className="tr-stop-line-name">{item.client.etablissement}</span>
                       <span className="tr-stop-line-trajet">{item.client.ville}</span>
                       <div className="tr-stop-line-actions">
                         <BoutonAgenda
                           pharmacie={item.client}
                           date={dateKey}
-                          heure={minToHHMMInput(item.heureArrivee)}
+                          heure={heureInput}
                           duree={item.client.dureeDefaut || 20}
                           onSave={(rdv) => setAgendaRdvs((prev) => [...(prev || []), rdv])}
                         />
                         <button className="tr-btn tr-btn-outline tr-btn-sm" onClick={() => ouvrirPlanB(dateKey, item)}>
                           <ShieldAlert size={12} /> Lapin
                         </button>
+                        <button className="tr-btn tr-btn-sm" title="Supprimer ce RDV"
+                          onClick={() => { if (window.confirm(`Supprimer ${item.client.etablissement} du ${dateKey} ?`)) supprimerVisite(dateKey, item.client.id); }}
+                          style={{ background: "transparent", border: "1.5px solid var(--rouge)", color: "var(--rouge)", borderRadius: 6, cursor: "pointer", padding: "5px 8px", display: "inline-flex", alignItems: "center" }}>
+                          <X size={12} />
+                        </button>
                       </div>
                     </div>
-                  ))}
+                    );
+                  })}
 
                   {/* ── CORRECTION : RDV créés depuis l'Agenda ── */}
                   {rdvAgendaJour.map((r) => {
@@ -1454,6 +1493,11 @@ function SemaineView({ departs, definirDepartJour, rdvParJourCalcule, joursTries
                         <span className="tr-stop-line-trajet" style={{ color: isPersonnel ? "var(--gris)" : "var(--vert)", fontWeight: 600 }}>
                           {isPersonnel ? "Personnel" : "Agenda"}
                         </span>
+                        <button title="Supprimer ce RDV"
+                          onClick={() => { if (window.confirm(`Supprimer "${titre}" ?`)) supprimerRdvAgenda(r.id); }}
+                          style={{ background: "transparent", border: "1.5px solid var(--rouge)", color: "var(--rouge)", borderRadius: 6, cursor: "pointer", padding: "5px 8px", display: "inline-flex", alignItems: "center", marginLeft: "auto", flexShrink: 0 }}>
+                          <X size={12} />
+                        </button>
                       </div>
                     );
                   })}
