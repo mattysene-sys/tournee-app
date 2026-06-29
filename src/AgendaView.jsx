@@ -372,12 +372,13 @@ function PanneauExport({ rdvParJourCalcule, agendaRdvs, totalRdvPlanifies, isRea
     });
   });
 
-  // 2. RDV créés manuellement depuis l'Agenda (type tournee, pas overrideTournee)
+  // 2. RDV créés manuellement depuis l'Agenda (tous types, pas overrideTournee)
   const clientsById = {};
   (clients || []).forEach(c => { clientsById[c.id] = c; });
-  (agendaRdvs || []).filter(r => !r.overrideTournee && r.type === "tournee").forEach(r => {
+  (agendaRdvs || []).filter(r => !r.overrideTournee).forEach(r => {
     const key = `agenda|${r.id}`;
-    // Éviter les doublons si déjà dans rdvParJourCalcule
+    // Éviter les doublons : si un RDV Tournée existe déjà pour ce client ce jour, ignorer
+    if (r.clientId && tousRdvs.some(x => x.client.id === r.clientId && x.date === r.jour)) return;
     if (tousRdvs.some(x => x.key === key)) return;
     const client = r.clientId ? clientsById[r.clientId] : null;
     // Construire un faux objet client si pas trouvé (titre libre)
@@ -560,7 +561,7 @@ export default function AgendaView({ planning, rdvParJourCalcule, agendaRdvs, se
   // ── Hook Google partagé ──
   const { isReady, authorize, createEvent } = useGoogleCalendar();
 
-  const totalRdvPlanifies = Object.values(rdvParJourCalcule).reduce((acc, items) => acc + items.length, 0) + (agendaRdvs || []).filter(r => !r.overrideTournee && r.type === "tournee").length;
+  const totalRdvPlanifies = Object.values(rdvParJourCalcule).reduce((acc, items) => acc + items.length, 0) + (agendaRdvs || []).filter(r => !r.overrideTournee).length;
 
   const lundi  = getLundi(semaineOffset);
   const jours  = Array.from({length:5},(_,i)=>{ const d=new Date(lundi); d.setDate(lundi.getDate()+i); return d; });
