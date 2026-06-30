@@ -1461,6 +1461,22 @@ function SemaineView({ departs, definirDepartJour, rdvParJourCalcule, joursTries
             const clientIdsSeq = new Set(seq.map(item => item.client.id));
             const rdvAgendaJour = (agendaRdvs || []).filter(r => r.jour === dateKey && !r.overrideTournee && !(r.clientId && clientIdsSeq.has(r.clientId)));
             const totalRdv = seq.length + rdvAgendaJour.length;
+
+            // CORRECTIF : fusionner Tournée + Agenda puis trier par heure
+            const itemsTournee = seq.map((item) => {
+              const override = (agendaRdvs || []).find(r => r.overrideTournee === item.client.id && r.jour === dateKey);
+              const heureAff = override ? override.debut.replace(":", "h") : minToHHMM(item.heureArrivee);
+              const heureInp = override ? override.debut : minToHHMMInput(item.heureArrivee);
+              const minutesDebut = override ? hhmmToMin(override.debut) : item.heureArrivee;
+              return { kind: "tournee", minutesDebut, item, heureAff, heureInp };
+            });
+            const itemsAgenda = rdvAgendaJour.map((r) => ({
+              kind: "agenda",
+              minutesDebut: r.debut ? hhmmToMin(r.debut) : 0,
+              r,
+            }));
+            const itemsTries = [...itemsTournee, ...itemsAgenda].sort((a, b) => a.minutesDebut - b.minutesDebut);
+
             return (
               <div className="tr-jour-block" key={dateKey}>
                 <div className="tr-jour-block-head">
@@ -1471,41 +1487,38 @@ function SemaineView({ departs, definirDepartJour, rdvParJourCalcule, joursTries
                   {!depart && rdvAgendaJour.length === 0 && <div style={{ fontSize:12.5, color:"var(--gris)", padding:"6px 0" }}>Pas de point de départ défini pour ce jour</div>}
                   {seq.length === 0 && rdvAgendaJour.length === 0 && depart && <div style={{ fontSize:12.5, color:"var(--gris)", padding:"6px 0" }}>Aucun RDV ce jour</div>}
 
-                  {seq.map((item) => {
-                    const override = (agendaRdvs || []).find(r => r.overrideTournee === item.client.id && r.jour === dateKey);
-                    const heureAff = override ? override.debut.replace(":", "h") : minToHHMM(item.heureArrivee);
-                    const heureInp = override ? override.debut : minToHHMMInput(item.heureArrivee);
-                    return (
-                      <div className="tr-stop-line" key={item.client.id}>
-                        <span className="tr-pression-dot" style={{ background: PRESSION_COLOR[item.client.pression] || "var(--gris)" }}/>
-                        <span className="tr-stop-line-time">{heureAff}</span>
-                        <span className="tr-stop-line-name" style={{ cursor:"pointer" }} onClick={() => onOuvrirFiche && onOuvrirFiche(item.client)}>{item.client.etablissement}</span>
-                        <span className="tr-stop-line-trajet">{item.client.ville}</span>
-                        <div className="tr-stop-line-actions">
-                          {/* Appel direct mobile si dispo */}
-                          {item.client.mobile_titulaire && (
-                            <a href={`tel:${item.client.mobile_titulaire}`} className="tr-btn tr-btn-outline tr-btn-sm" style={{ flexShrink:0 }} title={`Appeler ${item.client.mobile_titulaire}`}><Phone size={12}/></a>
-                          )}
-                          <BoutonAgenda pharmacie={item.client} date={dateKey} heure={heureInp} duree={item.client.dureeDefaut || 20} onSave={(rdv) => setAgendaRdvs((prev) => [...(prev || []), rdv])}/>
-                          <button className="tr-btn tr-btn-outline tr-btn-sm" onClick={() => ouvrirPlanB(dateKey, item)}>
-                            <ShieldAlert size={12}/> Lapin
-                          </button>
-                          <button className="tr-btn tr-btn-sm" title="Supprimer ce RDV"
-                            onClick={() => { if (window.confirm(`Supprimer ${item.client.etablissement} du ${dateKey} ?`)) supprimerVisite(dateKey, item.client.id); }}
-                            style={{ background:"transparent", border:"1.5px solid var(--rouge)", color:"var(--rouge)", borderRadius:6, cursor:"pointer", padding:"5px 8px", display:"inline-flex", alignItems:"center" }}>
-                            <X size={12}/>
-                          </button>
+                  {itemsTries.map((entry) => {
+                    if (entry.kind === "tournee") {
+                      const { item, heureAff, heureInp } = entry;
+                      return (
+                        <div className="tr-stop-line" key={`t-${item.client.id}`}>
+                          <span className="tr-pression-dot" style={{ background: PRESSION_COLOR[item.client.pression] || "var(--gris)" }}/>
+                          <span className="tr-stop-line-time">{heureAff}</span>
+                          <span className="tr-stop-line-name" style={{ cursor:"pointer" }} onClick={() => onOuvrirFiche && onOuvrirFiche(item.client)}>{item.client.etablissement}</span>
+                          <span className="tr-stop-line-trajet">{item.client.ville}</span>
+                          <div className="tr-stop-line-actions">
+                            {item.client.mobile_titulaire && (
+                              <a href={`tel:${item.client.mobile_titulaire}`} className="tr-btn tr-btn-outline tr-btn-sm" style={{ flexShrink:0 }} title={`Appeler ${item.client.mobile_titulaire}`}><Phone size={12}/></a>
+                            )}
+                            <BoutonAgenda pharmacie={item.client} date={dateKey} heure={heureInp} duree={item.client.dureeDefaut || 20} onSave={(rdv) => setAgendaRdvs((prev) => [...(prev || []), rdv])}/>
+                            <button className="tr-btn tr-btn-outline tr-btn-sm" onClick={() => ouvrirPlanB(dateKey, item)}>
+                              <ShieldAlert size={12}/> Lapin
+                            </button>
+                            <button className="tr-btn tr-btn-sm" title="Supprimer ce RDV"
+                              onClick={() => { if (window.confirm(`Supprimer ${item.client.etablissement} du ${dateKey} ?`)) supprimerVisite(dateKey, item.client.id); }}
+                              style={{ background:"transparent", border:"1.5px solid var(--rouge)", color:"var(--rouge)", borderRadius:6, cursor:"pointer", padding:"5px 8px", display:"inline-flex", alignItems:"center" }}>
+                              <X size={12}/>
+                            </button>
+                          </div>
                         </div>
-                      </div>
-                    );
-                  })}
-
-                  {rdvAgendaJour.map((r) => {
+                      );
+                    }
+                    const r = entry.r;
                     const heureAffichee = r.debut ? r.debut.replace(":", "h") : "—";
                     const titre = r.titre || "Agenda RDV";
                     const isPersonnel = r.type === "personnel" || r.source === "google";
                     return (
-                      <div className="tr-stop-line tr-stop-line-agenda" key={r.id} style={{ borderLeftColor: isPersonnel ? "var(--gris)" : "var(--vert)" }}>
+                      <div className="tr-stop-line tr-stop-line-agenda" key={`a-${r.id}`} style={{ borderLeftColor: isPersonnel ? "var(--gris)" : "var(--vert)" }}>
                         <span className="tr-stop-line-time">{heureAffichee}</span>
                         <span className="tr-stop-line-name">{titre}</span>
                         <span className="tr-stop-line-trajet" style={{ color: isPersonnel ? "var(--gris)" : "var(--vert)", fontWeight:600 }}>
