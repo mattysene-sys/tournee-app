@@ -1588,3 +1588,4 @@ function SemaineView({ departs, definirDepartJour, rdvParJourCalcule, joursTries
       </div>
     </div>
   );
+}
