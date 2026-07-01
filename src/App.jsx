@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from "react";
 import * as XLSX from "xlsx";
 import { MapPin, Clock, Upload, RefreshCw, Calendar, AlertCircle, CheckCircle2, Sparkles, Trophy, ShieldAlert, Phone, Mail, History, X, Search, ChevronDown, ChevronLeft, ChevronRight, Plus } from "lucide-react";
 import AgendaView from "./AgendaView";
+import AssistantVocal from "./components/AssistantVocal";
 import BoutonAgenda from "./components/BoutonAgenda";
 
 // ============================================================
@@ -1332,6 +1333,14 @@ function App({ code, onDeconnecter }) {
           </div>
         )}
 
+        {/* ASSISTANT VOCAL — visible sur Prochain RDV et Ma semaine */}
+        {(vue === "prochain-rdv" || vue === "semaine") && (
+          <AssistantVocal
+            clients={clients}
+            rdvDuJour={rdvParJourCalcule[dateToKey(new Date())] || []}
+          />
+        )}
+
         {/* VUE : MA SEMAINE */}
         {vue === "semaine" && (
           <SemaineView
@@ -1579,4 +1588,3 @@ function SemaineView({ departs, definirDepartJour, rdvParJourCalcule, joursTries
       </div>
     </div>
   );
-}
