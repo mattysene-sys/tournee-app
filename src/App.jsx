@@ -3,6 +3,7 @@ import * as XLSX from "xlsx";
 import { MapPin, Clock, Upload, RefreshCw, Calendar, AlertCircle, CheckCircle2, Sparkles, Trophy, ShieldAlert, Phone, Mail, History, X, Search, ChevronDown, ChevronLeft, ChevronRight, Plus } from "lucide-react";
 import AgendaView from "./AgendaView";
 import AssistantVocal from "./components/AssistantVocal";
+import FicheClient, { BadgeContactManquant } from "./components/FicheClient";
 import BoutonAgenda from "./components/BoutonAgenda";
 
 // ============================================================
@@ -589,7 +590,15 @@ function App({ code, onDeconnecter }) {
   const [rdvAnnule, setRdvAnnule] = useState(null);
   const [planB, setPlanB] = useState(null);
   const [creneauRetenu, setCreneauRetenu] = useState(null);
+  const [ficheClient, setFicheClient] = useState(null);
   const fileInputRef = useRef(null);
+
+  async function sauvegarderContact(clientId, data) {
+    setClients((prev) =>
+      prev.map((c) => c.id === clientId ? { ...c, ...data } : c)
+    );
+    showToast("Contact enregistré ✓", "ok");
+  }
 
   function showToast(msg, type = "ok") {
     setToast({ msg, type });
@@ -1204,12 +1213,13 @@ function App({ code, onDeconnecter }) {
                   </div>
                   <div className="tr-clients-list">
                     {clientsFiltres.slice(0, 80).map((c) => (
-                      <div key={c.id} className="tr-client-row">
+                      <div key={c.id} className="tr-client-row" onClick={() => setFicheClient(c)} style={{ cursor: "pointer" }}>
                         <span className="tr-pression-dot" style={{ background: PRESSION_COLOR[c.pression] || "var(--gris)" }}></span>
                         <div className="tr-client-row-main">
                           <div className="tr-client-row-name">{c.etablissement}</div>
                           <div className="tr-client-row-meta">{c.ville} {c.coords ? "" : "· non localisé"}</div>
                         </div>
+                        <BadgeContactManquant client={c} onClick={() => setFicheClient(c)} />
                         {c.ciblage && <span className={`tr-badge ${["GOLD", "PLATINIUM", "COMPTE CLE"].includes(c.ciblage) ? "tr-badge-gold" : "tr-badge-default"}`}>{c.ciblage}</span>}
                       </div>
                     ))}
@@ -1282,6 +1292,7 @@ function App({ code, onDeconnecter }) {
                       <div className="tr-client-row-name">{c.etablissement}</div>
                       <div className="tr-client-row-meta">{c.ville} {c.derniereVisite ? `· vu le ${formatDateCourt(c.derniereVisite)}` : "· jamais vu"}</div>
                     </div>
+                    <BadgeContactManquant client={c} onClick={(e) => { e.stopPropagation(); setFicheClient(c); }} />
                     {c.ciblage && <span className={`tr-badge ${["GOLD", "PLATINIUM", "COMPTE CLE"].includes(c.ciblage) ? "tr-badge-gold" : "tr-badge-default"}`}>{c.ciblage}</span>}
                   </div>
                 ))}
@@ -1398,6 +1409,14 @@ function App({ code, onDeconnecter }) {
             ))}
           </div>
         </div>
+      )}
+
+      {ficheClient && (
+        <FicheClient
+          client={ficheClient}
+          onSave={sauvegarderContact}
+          onClose={() => setFicheClient(null)}
+        />
       )}
 
       {toast && (
