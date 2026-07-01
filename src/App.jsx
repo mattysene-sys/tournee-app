@@ -1381,7 +1381,25 @@ function SemaineView({ departs, definirDepartJour, rdvParJourCalcule, joursTries
 
   const aujourdHui = dateToKey(new Date());
   const joursAgenda = (agendaRdvs || []).map(r => r.jour).filter(Boolean);
-  const joursAffiches = Array.from(new Set([...joursTries, ...Object.keys(departs), ...joursAgenda])).sort();
+  const tousLesJours = Array.from(new Set([...joursTries, ...Object.keys(departs), ...joursAgenda])).sort();
+
+  // Calculer le lundi de la semaine en cours
+  const lundiSemaineCourante = (() => {
+    const now = new Date();
+    const jourSem = now.getDay();
+    const diffLundi = jourSem === 0 ? -6 : 1 - jourSem;
+    const lundi = new Date(now);
+    lundi.setDate(now.getDate() + diffLundi);
+    lundi.setHours(0, 0, 0, 0);
+    return lundi.toISOString().slice(0, 10);
+  })();
+
+  // Par defaut : n'afficher que les jours a partir du lundi de cette semaine
+  const [afficherPassés, setAfficherPassés] = useState(false);
+  const joursAffiches = afficherPassés
+    ? tousLesJours
+    : tousLesJours.filter(d => d >= lundiSemaineCourante);
+  const nbJoursPassés = tousLesJours.filter(d => d < lundiSemaineCourante).length;
 
   // Scroll automatique vers la semaine en cours a l'ouverture
   // On cherche le lundi de la semaine actuelle, puis le 1er jour planifie
@@ -1474,6 +1492,14 @@ function SemaineView({ departs, definirDepartJour, rdvParJourCalcule, joursTries
 
       <div className="tr-card">
         <div className="tr-card-title"><Calendar size={14}/> Vue de la semaine</div>
+
+        {nbJoursPassés > 0 && (
+          <button onClick={() => setAfficherPassés(p => !p)}
+            style={{ marginBottom:12, background:"transparent", border:"1.5px solid var(--gris-clair)", borderRadius:6, padding:"7px 12px", fontSize:12, color:"var(--gris)", cursor:"pointer", display:"flex", alignItems:"center", gap:6, fontFamily:"'Oswald',sans-serif", textTransform:"uppercase", letterSpacing:"0.03em" }}>
+            {afficherPassés ? "▲ Masquer les semaines précédentes" : `▼ ${nbJoursPassés} jour${nbJoursPassés > 1 ? "s" : ""} précédent${nbJoursPassés > 1 ? "s" : ""}`}
+          </button>
+        )}
+
         {joursAffiches.length === 0 ? (
           <div className="tr-empty">Aucun jour planifié. Commence par définir ton domicile ou un point de départ à gauche.</div>
         ) : (
