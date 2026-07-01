@@ -1575,6 +1575,8 @@ function SemaineView({ departs, definirDepartJour, rdvParJourCalcule, joursTries
                     const heureAffichee = r.debut ? r.debut.replace(":", "h") : "—";
                     const titre = r.titre || "Agenda RDV";
                     const isPersonnel = r.type === "personnel" || r.source === "google";
+                    // Trouver le client associé si ce RDV vient d'une pharmacie
+                    const clientAgenda = r.clientId ? (rdvParJourCalcule[dateKey] || []).find(x => x.client.id === r.clientId)?.client || null : null;
                     return (
                       <div className="tr-stop-line tr-stop-line-agenda" key={`a-${r.id}`} style={{ borderLeftColor: isPersonnel ? "var(--gris)" : "var(--vert)" }}>
                         <span className="tr-stop-line-time">{heureAffichee}</span>
@@ -1582,11 +1584,22 @@ function SemaineView({ departs, definirDepartJour, rdvParJourCalcule, joursTries
                         <span className="tr-stop-line-trajet" style={{ color: isPersonnel ? "var(--gris)" : "var(--vert)", fontWeight:600 }}>
                           {isPersonnel ? "Personnel" : "Agenda"}
                         </span>
-                        <button title="Supprimer ce RDV"
-                          onClick={() => { if (window.confirm(`Supprimer "${titre}" ?`)) supprimerRdvAgenda(r.id); }}
-                          style={{ background:"transparent", border:"1.5px solid var(--rouge)", color:"var(--rouge)", borderRadius:6, cursor:"pointer", padding:"5px 8px", display:"inline-flex", alignItems:"center", marginLeft:"auto", flexShrink:0 }}>
-                          <X size={12}/>
-                        </button>
+                        <div className="tr-stop-line-actions">
+                          {!isPersonnel && (
+                            <BoutonAgenda
+                              pharmacie={clientAgenda || { id: r.id, etablissement: titre, nom: titre, ville: "", adresse: "", cp: "", tel1: null, email: null, contact: null, ciblage: null, groupement: null }}
+                              date={dateKey}
+                              heure={r.debut || "09:00"}
+                              duree={r.debut && r.fin ? ((() => { const [h1,m1] = r.debut.split(":").map(Number); const [h2,m2] = r.fin.split(":").map(Number); return (h2*60+m2)-(h1*60+m1); })()) : 30}
+                              onSave={(rdvSaved) => setAgendaRdvs((prev) => prev.map(x => x.id === r.id ? { ...x, googleEventId: rdvSaved.googleEventId } : x))}
+                            />
+                          )}
+                          <button title="Supprimer ce RDV"
+                            onClick={() => { if (window.confirm(`Supprimer "${titre}" ?`)) supprimerRdvAgenda(r.id); }}
+                            style={{ background:"transparent", border:"1.5px solid var(--rouge)", color:"var(--rouge)", borderRadius:6, cursor:"pointer", padding:"5px 8px", display:"inline-flex", alignItems:"center", flexShrink:0 }}>
+                            <X size={12}/>
+                          </button>
+                        </div>
                       </div>
                     );
                   })}
