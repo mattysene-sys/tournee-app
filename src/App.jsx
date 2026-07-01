@@ -1384,13 +1384,25 @@ function SemaineView({ departs, definirDepartJour, rdvParJourCalcule, joursTries
   const joursAffiches = Array.from(new Set([...joursTries, ...Object.keys(departs), ...joursAgenda])).sort();
 
   // Scroll automatique vers la semaine en cours a l'ouverture
+  // On cherche le lundi de la semaine actuelle, puis le 1er jour planifie
+  // dans une fenetre de 7 jours autour d'aujourd'hui
   const semaineEnCoursRef = useRef(null);
+  const lundiSemaineRef = useRef(null);
   useEffect(() => {
-    if (semaineEnCoursRef.current) {
-      setTimeout(() => {
+    // Calculer le lundi de la semaine en cours
+    const now = new Date();
+    const jourSem = now.getDay();
+    const diffLundi = jourSem === 0 ? -6 : 1 - jourSem;
+    const lundi = new Date(now);
+    lundi.setDate(now.getDate() + diffLundi);
+    lundi.setHours(0, 0, 0, 0);
+    lundiSemaineRef.current = lundi.toISOString().slice(0, 10);
+
+    setTimeout(() => {
+      if (semaineEnCoursRef.current) {
         semaineEnCoursRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
-      }, 150);
-    }
+      }
+    }, 150);
   }, []);
 
   function ajouterDepart() {
@@ -1487,11 +1499,18 @@ function SemaineView({ departs, definirDepartJour, rdvParJourCalcule, joursTries
             }));
             const itemsTries = [...itemsTournee, ...itemsAgenda].sort((a, b) => a.minutesDebut - b.minutesDebut);
 
-            // Attacher le ref au premier jour >= aujourd'hui pour le scroll auto
-            const estPremierJourActuel = dateKey >= aujourdHui && !semaineEnCoursRef.current;
+            // Attacher le ref au premier jour de la semaine en cours
+            // (lundi de cette semaine, ou le plus proche dans la liste)
+            const lundiCourant = lundiSemaineRef.current;
+            const estDansSemaineCourante = lundiCourant && dateKey >= lundiCourant && dateKey <= (
+              (() => { const v = new Date(lundiCourant + "T00:00:00"); v.setDate(v.getDate() + 6); return v.toISOString().slice(0,10); })()
+            );
+            // On attache le ref sur le PREMIER jour affiché dans la semaine courante
+            const doitScroller = estDansSemaineCourante && !semaineEnCoursRef._attached;
+            if (doitScroller) semaineEnCoursRef._attached = true;
 
             return (
-              <div className="tr-jour-block" key={dateKey} ref={estPremierJourActuel ? semaineEnCoursRef : null}>
+              <div className="tr-jour-block" key={dateKey} ref={doitScroller ? semaineEnCoursRef : null}>
                 <div className="tr-jour-block-head" style={{ background: dateKey === aujourdHui ? "var(--orange)" : "var(--ardoise)" }}>
                   <span>{formatDateFr(dateKey)}</span>
                   <span>{totalRdv} RDV{depart ? ` · Départ ${depart.heure}` : ""}</span>
