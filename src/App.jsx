@@ -1383,6 +1383,16 @@ function SemaineView({ departs, definirDepartJour, rdvParJourCalcule, joursTries
   const joursAgenda = (agendaRdvs || []).map(r => r.jour).filter(Boolean);
   const joursAffiches = Array.from(new Set([...joursTries, ...Object.keys(departs), ...joursAgenda])).sort();
 
+  // Scroll automatique vers la semaine en cours a l'ouverture
+  const semaineEnCoursRef = useRef(null);
+  useEffect(() => {
+    if (semaineEnCoursRef.current) {
+      setTimeout(() => {
+        semaineEnCoursRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
+      }, 150);
+    }
+  }, []);
+
   function ajouterDepart() {
     if (!nouveauJour || !adresseInput.trim()) return;
     definirDepartJour(nouveauJour, adresseInput.trim(), heureInput);
@@ -1477,9 +1487,12 @@ function SemaineView({ departs, definirDepartJour, rdvParJourCalcule, joursTries
             }));
             const itemsTries = [...itemsTournee, ...itemsAgenda].sort((a, b) => a.minutesDebut - b.minutesDebut);
 
+            // Attacher le ref au premier jour >= aujourd'hui pour le scroll auto
+            const estPremierJourActuel = dateKey >= aujourdHui && !semaineEnCoursRef.current;
+
             return (
-              <div className="tr-jour-block" key={dateKey}>
-                <div className="tr-jour-block-head">
+              <div className="tr-jour-block" key={dateKey} ref={estPremierJourActuel ? semaineEnCoursRef : null}>
+                <div className="tr-jour-block-head" style={{ background: dateKey === aujourdHui ? "var(--orange)" : "var(--ardoise)" }}>
                   <span>{formatDateFr(dateKey)}</span>
                   <span>{totalRdv} RDV{depart ? ` · Départ ${depart.heure}` : ""}</span>
                 </div>
