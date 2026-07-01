@@ -1389,8 +1389,12 @@ function SemaineView({ departs, definirDepartJour, rdvParJourCalcule, joursTries
   const aujourdHui = dateToKey(new Date());
 
   // ── CORRECTION : inclure aussi les jours qui ont des RDV agenda ──
+  const aujourdHuiKey = dateToKey(new Date());
   const joursAgenda = (agendaRdvs || []).map(r => r.jour).filter(Boolean);
-  const joursAffiches = Array.from(new Set([...joursTries, ...Object.keys(departs), ...joursAgenda])).sort();
+  // N'afficher que les jours à partir d'aujourd'hui
+  const joursAffiches = Array.from(new Set([...joursTries, ...Object.keys(departs), ...joursAgenda]))
+    .filter(d => d >= aujourdHuiKey)
+    .sort();
 
   function ajouterDepart() {
     if (!nouveauJour || !adresseInput.trim()) return;
