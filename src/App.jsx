@@ -3,6 +3,7 @@ import * as XLSX from "xlsx";
 import { MapPin, Clock, Upload, RefreshCw, Calendar, AlertCircle, CheckCircle2, Sparkles, Trophy, ShieldAlert, Phone, Mail, History, X, Search, ChevronDown, ChevronLeft, ChevronRight, Plus, Save } from "lucide-react";
 import AgendaView from "./AgendaView";
 import BoutonAgenda from "./components/BoutonAgenda";
+import AssistantVocal from "./components/AssistantVocal";
 
 // ============================================================
 // Constantes
@@ -965,6 +966,25 @@ function App({ code, onDeconnecter }) {
   // Compteur contacts manquants
   const nbContactsManquants = clients.filter(c => contactManquant(c)).length;
 
+  // Préparer les RDV d'aujourd'hui pour l'assistant vocal
+  const aujourdHuiKey = dateToKey(new Date());
+  const rdvAujourdhui = [
+    ...(rdvParJourCalcule[aujourdHuiKey] || []).map(item => ({
+      titre: item.client.etablissement,
+      heure: minToHHMM(item.heureArrivee),
+      // Fallback : mobile titulaire > tel1 > tel2
+      mobile: item.client.mobile_titulaire || item.client.tel1 || item.client.tel2 || null,
+      // Fallback : mail titulaire > mail général Excel
+      email: item.client.mail_titulaire || item.client.email || null,
+    })),
+    ...(donnees.agendaRdvs || []).filter(r => r.jour === aujourdHuiKey).map(r => ({
+      titre: r.titre || "RDV",
+      heure: r.debut || "",
+      mobile: null,
+      email: null,
+    })),
+  ];
+
   return (
     <div className="tournee-root">
       <style>{`
@@ -1356,6 +1376,9 @@ function App({ code, onDeconnecter }) {
           onClose={() => setFicheOuverte(null)}
         />
       )}
+
+      {/* ── ASSISTANT VOCAL ── */}
+      <AssistantVocal clients={clients} rdvDuJour={rdvAujourdhui} />
 
       {/* ── TOAST ── */}
       {toast && (
