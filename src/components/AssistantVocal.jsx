@@ -6,7 +6,10 @@ import React, { useState, useRef, useCallback } from "react";
 import { Mic, MicOff, X, Send, Phone, Mail, Loader, CheckCircle2, AlertCircle } from "lucide-react";
 
 const CLAUDE_MODEL = "claude-sonnet-4-6";
+const SUPABASE_URL = "https://baeglgpwriyvcerybbwj.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_feR5aPDkEqXgdjxUqg4nHA_Ci-5TfEJ";
+// Proxy Supabase Edge Function pour eviter les erreurs CORS
+const CLAUDE_PROXY_URL = `${SUPABASE_URL}/functions/v1/claude-proxy`;
 
 // ─── Envoi SMS via Supabase Edge Function (à créer) ou fallback lien tel ───
 // Pour l'instant : ouverture de l'app SMS native avec le message pré-rempli
@@ -72,9 +75,13 @@ Règles :
 - Si tu ne trouves pas le client, clientId = null et explique
 - Langue : français`;
 
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
+  const res = await fetch(CLAUDE_PROXY_URL, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      "apikey": SUPABASE_ANON_KEY,
+      "Authorization": `Bearer ${SUPABASE_ANON_KEY}`,
+    },
     body: JSON.stringify({
       model: CLAUDE_MODEL,
       max_tokens: 1000,
@@ -82,7 +89,10 @@ Règles :
     }),
   });
 
-  if (!res.ok) throw new Error("Erreur Claude API");
+  if (!res.ok) {
+    const errBody = await res.text();
+    throw new Error(`Erreur proxy (${res.status}) : ${errBody.slice(0, 100)}`);
+  }
   const data = await res.json();
   const texte = data.content?.[0]?.text || "";
 
@@ -129,10 +139,19 @@ export default function AssistantVocal({ clients = [], rdvDuJour = [] }) {
       }
     };
     recognition.onerror = (e) => {
-      if (e.error === "no-speech") {
-        setErreurMsg("Aucune parole détectée. Réessaie.");
+      if (e.error === "not-allowed" || e.error === "permission-denied") {
+        setErreurMsg("Microphone non autorisé. Dans Chrome : appuie sur le 🔒 cadenas dans la barre d'adresse → Permissions → Microphone → Autoriser, puis recharge la page.");
+      } else if (e.error === "no-speech") {
+        setErreurMsg("Aucune parole détectée. Parle plus près du micro et réessaie.");
+      } else if (e.error === "audio-capture") {
+        setErreurMsg("Microphone introuvable. Vérifie qu'aucune autre application n'utilise le micro, puis réessaie.");
+      } else if (e.error === "network") {
+        setErreurMsg("Erreur réseau. Vérifie ta connexion internet.");
+      } else if (e.error === "aborted") {
+        setEtat("ferme");
+        return;
       } else {
-        setErreurMsg("Erreur micro : " + e.error);
+        setErreurMsg("Erreur micro : " + e.error + ". Réessaie.");
       }
       setEtat("erreur");
     };
