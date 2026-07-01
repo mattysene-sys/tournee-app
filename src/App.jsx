@@ -214,7 +214,7 @@ function useSyncedState(code, syncTick, setSyncTick) {
         sauvegarderDonneesDistantes(code, next).then((ok) => {
           setSyncTick((t) => ({ ...t, dernier: ok ? "ok" : "erreur", heure: Date.now() }));
         });
-      }, 1200);
+      }, 300);
     },
     [code, setSyncTick]
   );
@@ -507,12 +507,39 @@ function App({ code, onDeconnecter }) {
   const setAgendaRdvs = useCallback((u) => update("agendaRdvs", u), [update]);
 
   const [chargementInitial, setChargementInitial] = useState(true);
+
+  // Forcer la synchro avant de quitter la page
+  useEffect(() => {
+    const handleUnload = () => { forcerSyncMaintenant(); };
+    window.addEventListener('beforeunload', handleUnload);
+    return () => window.removeEventListener('beforeunload', handleUnload);
+  }, [forcerSyncMaintenant]);
+
+  // Forcer la synchro quand l'app passe en arrière-plan (mobile)
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (document.visibilityState === 'hidden') forcerSyncMaintenant();
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => document.removeEventListener('visibilitychange', handleVisibility);
+  }, [forcerSyncMaintenant]);
+
   useEffect(() => {
     let annule = false;
     chargerDonneesDistantes(code)
       .then((distant) => {
         if (annule || !distant) return;
         setDonneesEtPersist((local) => {
+          // Fusionner intelligemment : toujours prendre le meilleur de chaque champ
+          const mergeAgendaRdvs = () => {
+            const d = distant.agendaRdvs || [];
+            const l = local.agendaRdvs || [];
+            if (l.length > d.length) return l;
+            if (d.length > l.length) return d;
+            const scoreD = d.filter(r => r.clientId).length;
+            const scoreL = l.filter(r => r.clientId).length;
+            return scoreL >= scoreD ? l : d;
+          };
           const distantPlusRiche = (distant.clients || []).length > (local.clients || []).length;
           if (distantPlusRiche) {
             return {
@@ -521,23 +548,22 @@ function App({ code, onDeconnecter }) {
               planning: Object.keys(distant.planning || {}).length > 0 ? distant.planning : local.planning,
               departs: Object.keys(distant.departs || {}).length > 0 ? distant.departs : local.departs,
               domicile: distant.domicile || local.domicile || null,
-              agendaRdvs: (() => {
-                const d = distant.agendaRdvs || [];
-                const l = local.agendaRdvs || [];
-                // Toujours garder la version la plus complète
-                if (l.length > d.length) return l;
-                if (d.length > l.length) return d;
-                // Si même taille, préférer celle avec plus de clientIds
-                const scoreD = d.filter(r => r.clientId).length;
-                const scoreL = l.filter(r => r.clientId).length;
-                return scoreL >= scoreD ? l : d;
-              })(),
+              agendaRdvs: mergeAgendaRdvs(),
             };
           }
-          if (!local.domicile && distant.domicile) {
-            return { ...local, domicile: distant.domicile };
-          }
-          return local;
+          // Même si les clients sont identiques, toujours fusionner agendaRdvs et planning
+          const agendaMerge = mergeAgendaRdvs();
+          const planningMerge = Object.keys(distant.planning || {}).length > Object.keys(local.planning || {}).length
+            ? distant.planning : local.planning;
+          const departsMerge = Object.keys(distant.departs || {}).length > Object.keys(local.departs || {}).length
+            ? distant.departs : local.departs;
+          return {
+            ...local,
+            domicile: local.domicile || distant.domicile || null,
+            agendaRdvs: agendaMerge,
+            planning: planningMerge,
+            departs: departsMerge,
+          };
         });
       })
       .catch(() => {})
