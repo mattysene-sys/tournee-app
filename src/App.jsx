@@ -597,6 +597,8 @@ function App({ code, onDeconnecter }) {
     setClients((prev) =>
       prev.map((c) => c.id === clientId ? { ...c, ...data } : c)
     );
+    // Forcer la synchro immédiate vers Supabase
+    await forcerSyncMaintenant();
     showToast("Contact enregistré ✓", "ok");
   }
 
