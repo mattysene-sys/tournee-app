@@ -542,18 +542,19 @@ function App({ code, onDeconnecter }) {
             const scoreL = l.filter(r => r.clientId).length;
             return scoreL >= scoreD ? l : d;
           };
-          const distantPlusRiche = (distant.clients || []).length > (local.clients || []).length;
-          if (distantPlusRiche) {
-            return {
-              clients: distant.clients || [],
-              geoCache: { ...(local.geoCache || {}), ...(distant.geoCache || {}) },
-              planning: Object.keys(distant.planning || {}).length > 0 ? distant.planning : local.planning,
-              departs: Object.keys(distant.departs || {}).length > 0 ? distant.departs : local.departs,
-              domicile: distant.domicile || local.domicile || null,
-              agendaRdvs: mergeAgendaRdvs(),
-            };
-          }
-          // Même si les clients sont identiques, toujours fusionner agendaRdvs et planning
+          // Toujours prendre les clients de Supabase s'ils ont plus d'infos (contacts)
+          const mergeClients = () => {
+            const d = distant.clients || [];
+            const l = local.clients || [];
+            if (d.length > l.length) return d;
+            if (l.length > d.length) return l;
+            // Même nombre : prendre Supabase si plus de contacts renseignés
+            const scoreD = d.filter(c => c.mobile_titulaire || c.mail_titulaire || c.nom_contact).length;
+            const scoreL = l.filter(c => c.mobile_titulaire || c.mail_titulaire || c.nom_contact).length;
+            return scoreD >= scoreL ? d : l;
+          };
+
+          const clientsMerge = mergeClients();
           const agendaMerge = mergeAgendaRdvs();
           const planningMerge = Object.keys(distant.planning || {}).length > Object.keys(local.planning || {}).length
             ? distant.planning : local.planning;
@@ -561,6 +562,7 @@ function App({ code, onDeconnecter }) {
             ? distant.departs : local.departs;
           return {
             ...local,
+            clients: clientsMerge,
             domicile: local.domicile || distant.domicile || null,
             agendaRdvs: agendaMerge,
             planning: planningMerge,
