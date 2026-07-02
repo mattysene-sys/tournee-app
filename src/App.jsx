@@ -149,11 +149,15 @@ async function chargerDonneesDistantes(code) {
 }
 
 async function sauvegarderDonneesDistantes(code, donnees) {
+  const majLe = new Date().toISOString();
   const res = await supabaseFetch(`tournee_donnees?on_conflict=code`, {
     method: "POST",
     headers: { Prefer: "resolution=merge-duplicates" },
-    body: JSON.stringify({ code, donnees, maj_le: new Date().toISOString() }),
+    body: JSON.stringify({ code, donnees, maj_le: majLe }),
   });
+  if (res.ok) {
+    try { localStorage.setItem('tournee_maj_le', majLe); } catch {}
+  }
   return res.ok;
 }
 
@@ -531,6 +535,10 @@ function App({ code, onDeconnecter }) {
     chargerDonneesDistantes(code)
       .then((distant) => {
         if (annule || !distant) return;
+        const distantMajLe = distant.maj_le ? new Date(distant.maj_le).getTime() : 0;
+        const localMajLe = (() => { try { return new Date(JSON.parse(localStorage.getItem('tournee_maj_le')||'0')).getTime(); } catch { return 0; } })();
+        const distantPlusRecent = distantMajLe > localMajLe;
+
         setDonneesEtPersist((local) => {
           // Fusionner intelligemment : toujours prendre le meilleur de chaque champ
           const mergeAgendaRdvs = () => {
@@ -542,13 +550,15 @@ function App({ code, onDeconnecter }) {
             const scoreL = l.filter(r => r.clientId).length;
             return scoreL >= scoreD ? l : d;
           };
-          // Toujours prendre les clients de Supabase s'ils ont plus d'infos (contacts)
+          // Toujours prendre les clients de Supabase s'ils sont plus récents ou ont plus de contacts
           const mergeClients = () => {
             const d = distant.clients || [];
             const l = local.clients || [];
             if (d.length > l.length) return d;
             if (l.length > d.length) return l;
-            // Même nombre : prendre Supabase si plus de contacts renseignés
+            // Même nombre : si Supabase plus récent, prendre Supabase
+            if (distantPlusRecent) return d;
+            // Sinon prendre celui avec plus de contacts
             const scoreD = d.filter(c => c.mobile_titulaire || c.mail_titulaire || c.nom_contact).length;
             const scoreL = l.filter(c => c.mobile_titulaire || c.mail_titulaire || c.nom_contact).length;
             return scoreD >= scoreL ? d : l;
@@ -569,6 +579,11 @@ function App({ code, onDeconnecter }) {
             departs: departsMerge,
           };
         });
+      })
+      .then(() => {
+        if (distant?.maj_le) {
+          try { localStorage.setItem('tournee_maj_le', distant.maj_le); } catch {}
+        }
       })
       .catch(() => {})
       .finally(() => { if (!annule) setChargementInitial(false); });
