@@ -594,11 +594,14 @@ function App({ code, onDeconnecter }) {
   const fileInputRef = useRef(null);
 
   async function sauvegarderContact(clientId, data) {
-    setClients((prev) =>
+    // Mettre à jour via update() qui déclenche automatiquement pousserVersSupabase
+    update("clients", (prev) =>
       prev.map((c) => c.id === clientId ? { ...c, ...data } : c)
     );
-    // Forcer la synchro immédiate vers Supabase
-    await forcerSyncMaintenant();
+    // Attendre que le debounce parte puis forcer une synchro complète
+    setTimeout(async () => {
+      await forcerSyncMaintenant();
+    }, 400);
     showToast("Contact enregistré ✓", "ok");
   }
 
