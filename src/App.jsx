@@ -514,6 +514,17 @@ function App({ code, onDeconnecter }) {
 
   const [chargementInitial, setChargementInitial] = useState(true);
 
+  // Précharger le script Google Identity Services au démarrage
+  useEffect(() => {
+    if (!document.querySelector('script[src="https://accounts.google.com/gsi/client"]')) {
+      const script = document.createElement('script');
+      script.src = 'https://accounts.google.com/gsi/client';
+      script.async = true;
+      script.defer = true;
+      document.head.appendChild(script);
+    }
+  }, []);
+
   // Forcer la synchro avant de quitter la page
   useEffect(() => {
     const handleUnload = () => { forcerSyncMaintenant(); };
