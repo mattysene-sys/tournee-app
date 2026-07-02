@@ -1370,7 +1370,18 @@ function App({ code, onDeconnecter }) {
         {(vue === "prochain-rdv" || vue === "semaine") && (
           <AssistantVocal
             clients={clients}
-            rdvDuJour={rdvParJourCalcule[dateToKey(new Date())] || []}
+            rdvDuJour={[
+              ...(rdvParJourCalcule[dateToKey(new Date())] || []).map(r => ({
+                ...r.client,
+                heure: r.heureArrivee,
+              })),
+              ...(donnees.agendaRdvs || []).filter(r => r.jour === dateToKey(new Date())).map(r => ({
+                etablissement: r.titre,
+                heure: r.debut,
+                mobile: r.clientId ? (clients.find(c => c.id === r.clientId)?.mobile_titulaire || clients.find(c => c.id === r.clientId)?.tel1) : null,
+                email: r.clientId ? (clients.find(c => c.id === r.clientId)?.mail_titulaire || clients.find(c => c.id === r.clientId)?.email) : null,
+              })),
+            ]}
           />
         )}
 
