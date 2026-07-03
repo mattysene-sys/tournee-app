@@ -27,6 +27,7 @@ const CIBLAGE_SCORE = {
 };
 
 const PRESSION_COLOR = { Rouge: "var(--rouge)", Orange: "var(--orange)", Vert: "var(--vert)" };
+const CIBLAGE_ELIGIBLE_SUGGESTIONS = ["COMPTE CLE", "PLATINIUM", "GOLD", "SILVER", "BRONZE", "PROSPECTS 1"];
 
 // ============================================================
 // Utilitaires géo & temps
@@ -197,6 +198,7 @@ function useSyncedState(code, syncTick, setSyncTick) {
     departs: lireLocal("tournee_departs", {}),
     domicile: lireLocal("tournee_domicile", null),
     agendaRdvs: lireLocal("tournee_agendardvs", []),
+    periodesBloquees: lireLocal("tournee_periodes", []),
   }));
   const donneesRef = useRef(donnees);
   useEffect(() => { donneesRef.current = donnees; }, [donnees]);
@@ -210,6 +212,7 @@ function useSyncedState(code, syncTick, setSyncTick) {
     ecrireLocal("tournee_departs", next.departs);
     ecrireLocal("tournee_domicile", next.domicile || null);
     ecrireLocal("tournee_agendardvs", next.agendaRdvs || []);
+    ecrireLocal("tournee_periodes", next.periodesBloquees || []);
   }, []);
 
   const pousserVersSupabase = useCallback(
@@ -575,6 +578,7 @@ function App({ code, onDeconnecter }) {
             clients: clientsMerge,
             domicile: local.domicile || distant.domicile || null,
             agendaRdvs: agendaMerge,
+            periodesBloquees: (distant.periodesBloquees || []).length > 0 ? distant.periodesBloquees : (local.periodesBloquees || []),
             planning: planningMerge,
             departs: departsMerge,
           };
@@ -608,6 +612,8 @@ function App({ code, onDeconnecter }) {
   const [planB, setPlanB] = useState(null);
   const [creneauRetenu, setCreneauRetenu] = useState(null);
   const [ficheClient, setFicheClient] = useState(null);
+  const periodesBloquees = donnees.periodesBloquees || [];
+  const setPeriodesBloquees = useCallback((u) => update("periodesBloquees", u), [update]);
   const fileInputRef = useRef(null);
 
   async function sauvegarderContact(clientId, data) {
@@ -1400,6 +1406,14 @@ function App({ code, onDeconnecter }) {
             setAgendaRdvs={setAgendaRdvs}
             supprimerVisite={supprimerVisite}
             supprimerRdvAgenda={supprimerRdvAgenda}
+            periodesBloquees={periodesBloquees}
+            setPeriodesBloquees={setPeriodesBloquees}
+            clients={clients}
+            clientsById={clientsById}
+            rdvParJourCalcule={rdvParJourCalcule}
+            onOuvrirFiche={setFicheClient}
+            onChercherCreneau={chercherCreneau}
+            setVue={setVue}
           />
         )}
 
@@ -1465,23 +1479,59 @@ function App({ code, onDeconnecter }) {
 // ============================================================
 // Sous-composant : vue Semaine
 // ============================================================
-function SemaineView({ departs, definirDepartJour, rdvParJourCalcule, joursTries, ouvrirPlanB, domicile, definirDomicile, appliquerDomicileAuJour, agendaRdvs, setAgendaRdvs, supprimerVisite, supprimerRdvAgenda }) {
+function SemaineView({ departs, definirDepartJour, rdvParJourCalcule, joursTries, ouvrirPlanB, domicile, definirDomicile, appliquerDomicileAuJour, agendaRdvs, setAgendaRdvs, supprimerVisite, supprimerRdvAgenda, periodesBloquees, setPeriodesBloquees, clients, clientsById, onOuvrirFiche, onChercherCreneau, setVue }) {
   const [nouveauJour, setNouveauJour] = useState("");
   const [adresseInput, setAdresseInput] = useState("");
   const [heureInput, setHeureInput] = useState("08:30");
   const [domicileInput, setDomicileInput] = useState(domicile ? domicile.adresse : "");
   const [domicileHeureInput, setDomicileHeureInput] = useState(domicile ? domicile.heure : "08:30");
   const [enregistrementDomicile, setEnregistrementDomicile] = useState(false);
+  const [showPeriodeForm, setShowPeriodeForm] = useState(false);
+  const [periodeDebut, setPeriodeDebut] = useState("");
+  const [periodeFin, setPeriodeFin] = useState("");
+  const [periodeNom, setPeriodeNom] = useState("");
 
   const aujourdHui = dateToKey(new Date());
-
-  // ── CORRECTION : inclure aussi les jours qui ont des RDV agenda ──
-  const aujourdHuiKey = dateToKey(new Date());
   const joursAgenda = (agendaRdvs || []).map(r => r.jour).filter(Boolean);
-  // N'afficher que les jours à partir d'aujourd'hui
+
+  function estBloque(dateKey) {
+    return (periodesBloquees || []).some(p => dateKey >= p.debut && dateKey <= p.fin);
+  }
+
   const joursAffiches = Array.from(new Set([...joursTries, ...Object.keys(departs), ...joursAgenda]))
-    .filter(d => d >= aujourdHuiKey)
+    .filter(d => d >= aujourdHui && !estBloque(d))
     .sort();
+
+  const CIBLAGE_OK = ["COMPTE CLE", "PLATINIUM", "GOLD", "SILVER", "BRONZE", "PROSPECTS 1"];
+
+  function getSuggestions(dateKey) {
+    const seq = rdvParJourCalcule[dateKey] || [];
+    const rdvAgenda = (agendaRdvs || []).filter(r => r.jour === dateKey && !r.overrideTournee);
+    const totalRdv = seq.length + rdvAgenda.length;
+    if (totalRdv === 0 || totalRdv >= 5) return [];
+
+    const dejaPlanifies = new Set([
+      ...Object.values(rdvParJourCalcule).flat().map(r => r.client.id),
+      ...(agendaRdvs || []).filter(r => r.clientId).map(r => r.clientId),
+    ]);
+
+    const pointsRef = [
+      ...(departs[dateKey] ? [departs[dateKey].coords] : domicile ? [domicile.coords] : []),
+      ...seq.filter(r => r.coords).map(r => r.coords),
+    ].filter(Boolean);
+
+    if (pointsRef.length === 0) return [];
+
+    return (clients || [])
+      .filter(c => c.coords && CIBLAGE_OK.includes(c.ciblage) && !dejaPlanifies.has(c.id))
+      .map(c => {
+        const distMin = Math.min(...pointsRef.map(p => estimerTrajetMin(p, c.coords) || 999));
+        return { client: c, trajet: distMin, score: CIBLAGE_SCORE[c.ciblage] || 0 };
+      })
+      .filter(x => x.trajet <= 20)
+      .sort((a, b) => a.trajet - b.trajet || b.score - a.score)
+      .slice(0, 5 - totalRdv);
+  }
 
   function ajouterDepart() {
     if (!nouveauJour || !adresseInput.trim()) return;
@@ -1501,9 +1551,20 @@ function SemaineView({ departs, definirDepartJour, rdvParJourCalcule, joursTries
     appliquerDomicileAuJour(nouveauJour, heureInput || domicile.heure);
   }
 
+  function ajouterPeriode() {
+    if (!periodeDebut || !periodeFin || !periodeNom.trim()) return;
+    setPeriodesBloquees(prev => [...(prev || []), { id: uid(), nom: periodeNom.trim(), debut: periodeDebut, fin: periodeFin }]);
+    setPeriodeDebut(""); setPeriodeFin(""); setPeriodeNom(""); setShowPeriodeForm(false);
+  }
+
+  function supprimerPeriode(id) {
+    setPeriodesBloquees(prev => (prev || []).filter(p => p.id !== id));
+  }
+
   return (
     <div className="tr-grid">
       <div>
+        {/* Domicile */}
         <div className="tr-card">
           <div className="tr-card-title"><MapPin size={14} /> Mon domicile (départ par défaut)</div>
           {domicile && (
@@ -1525,6 +1586,8 @@ function SemaineView({ departs, definirDepartJour, rdvParJourCalcule, joursTries
           </button>
           <p style={{ fontSize: 11.5, color: "var(--gris)", marginTop: 8, marginBottom: 0 }}>Une fois enregistré, tu pourras l'appliquer en un clic à n'importe quel jour ci-dessous.</p>
         </div>
+
+        {/* Départ jour précis */}
         <div className="tr-card">
           <div className="tr-card-title"><Calendar size={14} /> Point de départ d'un jour précis</div>
           <div className="tr-field">
@@ -1548,7 +1611,55 @@ function SemaineView({ departs, definirDepartJour, rdvParJourCalcule, joursTries
             <MapPin size={14} /> Enregistrer cette adresse pour ce jour
           </button>
         </div>
+
+        {/* Périodes bloquées */}
+        <div className="tr-card">
+          <div className="tr-card-title" style={{ justifyContent: "space-between" }}>
+            <span style={{ display: "flex", alignItems: "center", gap: 7 }}><span>🚫</span> Périodes bloquées</span>
+            <button className="tr-btn tr-btn-sm tr-btn-outline" onClick={() => setShowPeriodeForm(s => !s)} style={{ fontSize: 11 }}>
+              <Plus size={12} /> Ajouter
+            </button>
+          </div>
+          {showPeriodeForm && (
+            <div style={{ background: "#F5F2EC", borderRadius: 8, padding: 12, marginBottom: 12 }}>
+              <div className="tr-field">
+                <label className="tr-label">Nom</label>
+                <input className="tr-input" placeholder="Congés, Séminaire IBSA..." value={periodeNom} onChange={e => setPeriodeNom(e.target.value)} />
+              </div>
+              <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+                <div style={{ flex: 1 }}>
+                  <label className="tr-label">Du</label>
+                  <input className="tr-input" type="date" value={periodeDebut} min={aujourdHui} onChange={e => setPeriodeDebut(e.target.value)} />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label className="tr-label">Au</label>
+                  <input className="tr-input" type="date" value={periodeFin} min={periodeDebut || aujourdHui} onChange={e => setPeriodeFin(e.target.value)} />
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button className="tr-btn tr-btn-outline" style={{ flex: 1, fontSize: 12 }} onClick={() => setShowPeriodeForm(false)}>Annuler</button>
+                <button className="tr-btn tr-btn-primary" style={{ flex: 2, fontSize: 12 }} onClick={ajouterPeriode} disabled={!periodeDebut || !periodeFin || !periodeNom.trim()}>Enregistrer</button>
+              </div>
+            </div>
+          )}
+          {(periodesBloquees || []).length === 0 && !showPeriodeForm && (
+            <div style={{ fontSize: 12.5, color: "var(--gris)" }}>Aucune période bloquée</div>
+          )}
+          {(periodesBloquees || []).map(p => (
+            <div key={p.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "7px 0", borderBottom: "1px dashed var(--gris-clair)", fontSize: 13 }}>
+              <div>
+                <strong style={{ color: "var(--rouge)" }}>🚫 {p.nom}</strong>
+                <div style={{ fontSize: 11, color: "var(--gris)" }}>{formatDateCourt(p.debut)} → {formatDateCourt(p.fin)}</div>
+              </div>
+              <button onClick={() => supprimerPeriode(p.id)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--rouge)", padding: 4 }}>
+                <X size={14} />
+              </button>
+            </div>
+          ))}
+        </div>
       </div>
+
+      {/* Vue semaine */}
       <div className="tr-card">
         <div className="tr-card-title"><Calendar size={14} /> Vue de la semaine</div>
         {joursAffiches.length === 0 ? (
@@ -1557,81 +1668,95 @@ function SemaineView({ departs, definirDepartJour, rdvParJourCalcule, joursTries
           joursAffiches.map((dateKey) => {
             const depart = departs[dateKey];
             const seq = rdvParJourCalcule[dateKey] || [];
-            // ── CORRECTION : RDV créés depuis l'Agenda pour ce jour ──
             const clientIdsSeq = new Set(seq.map(item => item.client.id));
             const rdvAgendaJour = (agendaRdvs || []).filter(r =>
               r.jour === dateKey && !r.overrideTournee && !(r.clientId && clientIdsSeq.has(r.clientId))
             );
             const totalRdv = seq.length + rdvAgendaJour.length;
+            const suggestions = getSuggestions(dateKey);
+
             return (
               <div className="tr-jour-block" key={dateKey}>
                 <div className="tr-jour-block-head">
                   <span>{formatDateFr(dateKey)}</span>
-                  <span>{totalRdv} RDV{depart ? ` · Départ ${depart.heure}` : ""}</span>
+                  <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    {totalRdv} RDV{depart ? ` · Départ ${depart.heure}` : ""}
+                    {suggestions.length > 0 && (
+                      <span style={{ fontSize: 10, background: "var(--or)", color: "white", borderRadius: 999, padding: "2px 7px", fontFamily: "'Oswald',sans-serif" }}>
+                        💡 {suggestions.length}
+                      </span>
+                    )}
+                  </span>
                 </div>
                 <div className="tr-jour-block-body">
-                  {!depart && rdvAgendaJour.length === 0 && <div style={{ fontSize: 12.5, color: "var(--gris)", padding: "6px 0" }}>Pas de point de départ défini pour ce jour</div>}
-                  {seq.length === 0 && rdvAgendaJour.length === 0 && depart && <div style={{ fontSize: 12.5, color: "var(--gris)", padding: "6px 0" }}>Aucun RDV ce jour</div>}
+                  {!depart && rdvAgendaJour.length === 0 && seq.length === 0 && (
+                    <div style={{ fontSize: 12.5, color: "var(--gris)", padding: "6px 0" }}>Pas de point de départ défini pour ce jour</div>
+                  )}
+                  {seq.length === 0 && rdvAgendaJour.length === 0 && depart && (
+                    <div style={{ fontSize: 12.5, color: "var(--gris)", padding: "6px 0" }}>Aucun RDV ce jour</div>
+                  )}
 
                   {/* Visites Tournée */}
                   {seq.map((item) => {
-                    // Vérifier si un override agenda existe pour ce RDV
                     const override = (agendaRdvs || []).find(r => r.overrideTournee === item.client.id && r.jour === dateKey);
                     const heureAff = override ? override.debut.replace(":", "h") : minToHHMM(item.heureArrivee);
-                    const heureInput = override ? override.debut : minToHHMMInput(item.heureArrivee);
+                    const heureInp = override ? override.debut : minToHHMMInput(item.heureArrivee);
                     return (
-                    <div className="tr-stop-line" key={item.client.id}>
-                      <span className="tr-pression-dot" style={{ background: PRESSION_COLOR[item.client.pression] || "var(--gris)" }}></span>
-                      <span className="tr-stop-line-time">{heureAff}</span>
-                      <span className="tr-stop-line-name">{item.client.etablissement}</span>
-                      <span className="tr-stop-line-trajet">{item.client.ville}</span>
-                      <div className="tr-stop-line-actions">
-                        <BoutonAgenda
-                          pharmacie={item.client}
-                          date={dateKey}
-                          heure={heureInput}
-                          duree={item.client.dureeDefaut || 20}
-                          onSave={(rdv) => setAgendaRdvs((prev) => [...(prev || []), rdv])}
-                        />
-                        <button className="tr-btn tr-btn-outline tr-btn-sm" onClick={() => ouvrirPlanB(dateKey, item)}>
-                          <ShieldAlert size={12} /> Lapin
-                        </button>
-                        <button className="tr-btn tr-btn-sm" title="Supprimer ce RDV"
-                          onClick={() => { if (window.confirm(`Supprimer ${item.client.etablissement} du ${dateKey} ?`)) supprimerVisite(dateKey, item.client.id); }}
-                          style={{ background: "transparent", border: "1.5px solid var(--rouge)", color: "var(--rouge)", borderRadius: 6, cursor: "pointer", padding: "5px 8px", display: "inline-flex", alignItems: "center" }}>
-                          <X size={12} />
-                        </button>
+                      <div key={item.client.id} style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 4px", borderBottom: "1px dashed var(--gris-clair)" }}>
+                        <span style={{ width: 8, height: 8, borderRadius: "50%", background: PRESSION_COLOR[item.client.pression] || "var(--gris)", flexShrink: 0 }} />
+                        <span style={{ fontFamily: "'Oswald',sans-serif", fontWeight: 600, fontSize: 13, minWidth: 42, color: "var(--ardoise)", flexShrink: 0 }}>{heureAff}</span>
+                        <span style={{ flex: 1, fontWeight: 600, fontSize: 12.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", color: "var(--ardoise)", cursor: "pointer" }}
+                          onClick={() => onOuvrirFiche && onOuvrirFiche(item.client)}>
+                          {item.client.etablissement}
+                        </span>
+                        <div style={{ display: "flex", gap: 3, flexShrink: 0 }}>
+                          <BoutonAgenda pharmacie={item.client} date={dateKey} heure={heureInp} duree={item.client.dureeDefaut || 20} onSave={(rdv) => setAgendaRdvs((prev) => [...(prev || []), rdv])} />
+                          <button title="Lapin" onClick={() => ouvrirPlanB(dateKey, item)}
+                            style={{ background: "transparent", border: "1.5px solid var(--ardoise)", color: "var(--ardoise)", borderRadius: 6, cursor: "pointer", padding: "4px 6px", display: "inline-flex", alignItems: "center" }}>
+                            <ShieldAlert size={11} />
+                          </button>
+                          <button title="Supprimer" onClick={() => { if (window.confirm("Supprimer " + item.client.etablissement + " ?")) supprimerVisite(dateKey, item.client.id); }}
+                            style={{ background: "transparent", border: "1.5px solid var(--rouge)", color: "var(--rouge)", borderRadius: 6, cursor: "pointer", padding: "4px 6px", display: "inline-flex", alignItems: "center" }}>
+                            <X size={11} />
+                          </button>
+                        </div>
                       </div>
-                    </div>
                     );
                   })}
 
-                  {/* ── CORRECTION : RDV créés depuis l'Agenda ── */}
+                  {/* RDV Agenda */}
                   {rdvAgendaJour.map((r) => {
-                    const heureAffichee = r.debut
-                      ? r.debut.replace(":", "h")
-                      : "—";
+                    const heureAff = r.debut ? r.debut.replace(":", "h") : "—";
                     const titre = r.titre || "RDV Agenda";
                     const isPersonnel = r.type === "personal" || r.source === "google";
                     return (
-                      <div
-                        className="tr-stop-line tr-stop-line-agenda"
-                        key={r.id}
-                        style={{ borderLeftColor: isPersonnel ? "var(--gris)" : "var(--vert)" }}
-                      >
-                        <span className="tr-stop-line-time">{heureAffichee}</span>
-                        <span className="tr-stop-line-name">{titre}</span>
-                        <span className="tr-stop-line-trajet" style={{ color: isPersonnel ? "var(--gris)" : "var(--vert)", fontWeight: 600 }}>
-                          {isPersonnel ? "Personnel" : "Agenda"}
-                        </span>
-                        <button title="Supprimer ce RDV"
-                          onClick={() => { if (window.confirm(`Supprimer "${titre}" ?`)) supprimerRdvAgenda(r.id); }}
-                          style={{ background: "transparent", border: "1.5px solid var(--rouge)", color: "var(--rouge)", borderRadius: 6, cursor: "pointer", padding: "5px 8px", display: "inline-flex", alignItems: "center", marginLeft: "auto", flexShrink: 0 }}>
-                          <X size={12} />
+                      <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 8px", borderBottom: "1px dashed var(--gris-clair)", borderLeft: "3px solid " + (isPersonnel ? "var(--gris)" : "var(--vert)"), background: "var(--vert-clair)", borderRadius: "0 6px 6px 0" }}>
+                        <span style={{ fontFamily: "'Oswald',sans-serif", fontWeight: 600, fontSize: 13, minWidth: 42, color: "var(--ardoise)", flexShrink: 0 }}>{heureAff}</span>
+                        <span style={{ flex: 1, fontWeight: 600, fontSize: 12.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{titre}</span>
+                        <span style={{ fontSize: 10, color: isPersonnel ? "var(--gris)" : "var(--vert)", fontWeight: 600, flexShrink: 0 }}>{isPersonnel ? "Perso" : "Agenda"}</span>
+                        <button title="Supprimer" onClick={() => { if (window.confirm("Supprimer " + titre + " ?")) supprimerRdvAgenda(r.id); }}
+                          style={{ background: "transparent", border: "1.5px solid var(--rouge)", color: "var(--rouge)", borderRadius: 6, cursor: "pointer", padding: "4px 6px", display: "inline-flex", alignItems: "center", flexShrink: 0 }}>
+                          <X size={11} />
                         </button>
                       </div>
                     );
                   })}
+
+                  {/* Suggestions */}
+                  {suggestions.map((s) => (
+                    <div key={s.client.id} style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 8px", borderLeft: "3px solid var(--or)", background: "#FFFBEC", borderRadius: "0 6px 6px 0", marginTop: 2 }}>
+                      <span style={{ fontSize: 13, flexShrink: 0 }}>💡</span>
+                      <span style={{ flex: 1, fontSize: 12.5, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", color: "var(--ardoise)" }}>
+                        {s.client.etablissement}
+                        <span style={{ fontWeight: 400, color: "var(--gris)", marginLeft: 5 }}>{s.trajet} min</span>
+                      </span>
+                      <span style={{ fontSize: 10, fontFamily: "'Oswald',sans-serif", color: "var(--or)", flexShrink: 0 }}>{s.client.ciblage}</span>
+                      <button onClick={() => { if (onChercherCreneau) onChercherCreneau(s.client, { type: "date", date: dateKey }); if (setVue) setVue("prochain-rdv"); }}
+                        style={{ background: "var(--or)", border: "none", color: "white", borderRadius: 6, cursor: "pointer", padding: "4px 8px", fontSize: 11, fontFamily: "'Oswald',sans-serif", textTransform: "uppercase", flexShrink: 0 }}>
+                        + Planifier
+                      </button>
+                    </div>
+                  ))}
                 </div>
               </div>
             );
