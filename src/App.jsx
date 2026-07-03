@@ -11,8 +11,8 @@ import BoutonAgenda from "./components/BoutonAgenda";
 // ============================================================
 const VITESSE_MOYENNE_KMH = 38;
 const COEF_ROUTE = 1.3;
-const JOURNEE_DEBUT = 8 * 60;
-const JOURNEE_FIN = 19 * 60;
+const JOURNEE_DEBUT = 9 * 60;
+const JOURNEE_FIN = 17 * 60 + 30;
 
 const PRESSION_SCORE = { Rouge: 3, Orange: 2, Vert: 1 };
 const CIBLAGE_SCORE = {
@@ -346,7 +346,7 @@ function parseClientsWorkbook(workbook) {
       coords: (idx.latitude !== -1 && idx.longitude !== -1 && r[idx.latitude] && r[idx.longitude])
         ? { lat: parseFloat(r[idx.latitude]), lon: parseFloat(r[idx.longitude]) }
         : null,
-      dureeDefaut: 20,
+      dureeDefaut: 45,
     });
   }
   return out;
@@ -759,7 +759,7 @@ function App({ code, onDeconnecter }) {
         const trajet = prevCoords ? estimerTrajetMin(prevCoords, it.coords) || 0 : 0;
         curMin += trajet;
         const arrivee = curMin;
-        curMin += it.client.dureeDefaut || 20;
+        curMin += it.client.dureeDefaut || 45;
         seq.push({ client: it.client, coords: it.coords, heureArrivee: arrivee, fin: curMin });
         prevCoords = it.coords;
       });
@@ -909,7 +909,7 @@ function App({ code, onDeconnecter }) {
         const trajetPrevNew = estimerTrajetMin(prev.coords, client.coords);
         if (trajetPrevNew === null) continue;
         const arrivee = (prev.fin || 0) + trajetPrevNew;
-        const fin = arrivee + (client.dureeDefaut || 20);
+        const fin = arrivee + (client.dureeDefaut || 45);
         let coutSupplementaire;
         if (next && next.coords) {
           const trajetPrevNext = estimerTrajetMin(prev.coords, next.coords) || 0;
@@ -1340,7 +1340,7 @@ function App({ code, onDeconnecter }) {
                     pharmacie={creneauRetenu.client}
                     date={creneauRetenu.sugg.jour}
                     heure={minToHHMMInput(creneauRetenu.sugg.arrivee)}
-                    duree={creneauRetenu.client.dureeDefaut || 20}
+                    duree={creneauRetenu.client.dureeDefaut || 45}
                     onSave={(rdv) => setAgendaRdvs((prev) => [...(prev || []), rdv])}
                   />
                 </div>
@@ -1710,7 +1710,7 @@ function SemaineView({ departs, definirDepartJour, rdvParJourCalcule, joursTries
                           {item.client.etablissement}
                         </span>
                         <div style={{ display: "flex", gap: 3, flexShrink: 0 }}>
-                          <BoutonAgenda pharmacie={item.client} date={dateKey} heure={heureInp} duree={item.client.dureeDefaut || 20} onSave={(rdv) => setAgendaRdvs((prev) => [...(prev || []), rdv])} />
+                          <BoutonAgenda pharmacie={item.client} date={dateKey} heure={heureInp} duree={item.client.dureeDefaut || 45} onSave={(rdv) => setAgendaRdvs((prev) => [...(prev || []), rdv])} />
                           <button title="Lapin" onClick={() => ouvrirPlanB(dateKey, item)}
                             style={{ background: "transparent", border: "1.5px solid var(--ardoise)", color: "var(--ardoise)", borderRadius: 6, cursor: "pointer", padding: "4px 6px", display: "inline-flex", alignItems: "center" }}>
                             <ShieldAlert size={11} />
