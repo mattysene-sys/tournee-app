@@ -1696,67 +1696,111 @@ function SemaineView({ departs, definirDepartJour, rdvParJourCalcule, joursTries
                     <div style={{ fontSize: 12.5, color: "var(--gris)", padding: "6px 0" }}>Aucun RDV ce jour</div>
                   )}
 
-                  {/* Visites Tournée */}
-                  {seq.map((item) => {
-                    const override = (agendaRdvs || []).find(r => r.overrideTournee === item.client.id && r.jour === dateKey);
-                    const heureAff = override ? override.debut.replace(":", "h") : minToHHMM(item.heureArrivee);
-                    const heureInp = override ? override.debut : minToHHMMInput(item.heureArrivee);
-                    return (
-                      <div key={item.client.id} style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 4px", borderBottom: "1px dashed var(--gris-clair)" }}>
-                        <span style={{ width: 8, height: 8, borderRadius: "50%", background: PRESSION_COLOR[item.client.pression] || "var(--gris)", flexShrink: 0 }} />
-                        <span style={{ fontFamily: "'Oswald',sans-serif", fontWeight: 600, fontSize: 13, minWidth: 42, color: "var(--ardoise)", flexShrink: 0 }}>{heureAff}</span>
-                        <span style={{ flex: 1, fontWeight: 600, fontSize: 12.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", color: "var(--ardoise)", cursor: "pointer" }}
-                          onClick={() => onOuvrirFiche && onOuvrirFiche(item.client)}>
-                          {item.client.etablissement}
-                        </span>
-                        <div style={{ display: "flex", gap: 3, flexShrink: 0 }}>
-                          <BoutonAgenda pharmacie={item.client} date={dateKey} heure={heureInp} duree={item.client.dureeDefaut || 45} onSave={(rdv) => setAgendaRdvs((prev) => [...(prev || []), rdv])} />
-                          <button title="Lapin" onClick={() => ouvrirPlanB(dateKey, item)}
-                            style={{ background: "transparent", border: "1.5px solid var(--ardoise)", color: "var(--ardoise)", borderRadius: 6, cursor: "pointer", padding: "4px 6px", display: "inline-flex", alignItems: "center" }}>
-                            <ShieldAlert size={11} />
-                          </button>
-                          <button title="Supprimer" onClick={() => { if (window.confirm("Supprimer " + item.client.etablissement + " ?")) supprimerVisite(dateKey, item.client.id); }}
-                            style={{ background: "transparent", border: "1.5px solid var(--rouge)", color: "var(--rouge)", borderRadius: 6, cursor: "pointer", padding: "4px 6px", display: "inline-flex", alignItems: "center" }}>
-                            <X size={11} />
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })}
+                  {/* Toutes les visites triées chronologiquement + suggestions intercalées */}
+                  {(() => {
+                    // Construire liste unifiée triée par heure
+                    const lignes = [];
 
-                  {/* RDV Agenda */}
-                  {rdvAgendaJour.map((r) => {
-                    const heureAff = r.debut ? r.debut.replace(":", "h") : "—";
-                    const titre = r.titre || "RDV Agenda";
-                    const isPersonnel = r.type === "personal" || r.source === "google";
-                    return (
-                      <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 8px", borderBottom: "1px dashed var(--gris-clair)", borderLeft: "3px solid " + (isPersonnel ? "var(--gris)" : "var(--vert)"), background: "var(--vert-clair)", borderRadius: "0 6px 6px 0" }}>
-                        <span style={{ fontFamily: "'Oswald',sans-serif", fontWeight: 600, fontSize: 13, minWidth: 42, color: "var(--ardoise)", flexShrink: 0 }}>{heureAff}</span>
-                        <span style={{ flex: 1, fontWeight: 600, fontSize: 12.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{titre}</span>
-                        <span style={{ fontSize: 10, color: isPersonnel ? "var(--gris)" : "var(--vert)", fontWeight: 600, flexShrink: 0 }}>{isPersonnel ? "Perso" : "Agenda"}</span>
-                        <button title="Supprimer" onClick={() => { if (window.confirm("Supprimer " + titre + " ?")) supprimerRdvAgenda(r.id); }}
-                          style={{ background: "transparent", border: "1.5px solid var(--rouge)", color: "var(--rouge)", borderRadius: 6, cursor: "pointer", padding: "4px 6px", display: "inline-flex", alignItems: "center", flexShrink: 0 }}>
-                          <X size={11} />
-                        </button>
-                      </div>
-                    );
-                  })}
+                    // Visites Tournée
+                    seq.forEach(item => {
+                      const override = (agendaRdvs || []).find(r => r.overrideTournee === item.client.id && r.jour === dateKey);
+                      const heureMin = override ? hhmmToMin(override.debut) : item.heureArrivee;
+                      const heureAff = override ? override.debut.replace(":", "h") : minToHHMM(item.heureArrivee);
+                      const heureInp = override ? override.debut : minToHHMMInput(item.heureArrivee);
+                      lignes.push({ type: "tournee", heureMin, heureAff, heureInp, item });
+                    });
 
-                  {/* Suggestions */}
-                  {suggestions.map((s) => (
-                    <div key={s.client.id} style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 8px", borderLeft: "3px solid var(--or)", background: "#FFFBEC", borderRadius: "0 6px 6px 0", marginTop: 2 }}>
-                      <span style={{ fontSize: 13, flexShrink: 0 }}>💡</span>
-                      <span style={{ flex: 1, fontSize: 12.5, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", color: "var(--ardoise)" }}>
-                        {s.client.etablissement}
-                        <span style={{ fontWeight: 400, color: "var(--gris)", marginLeft: 5 }}>{s.trajet} min</span>
-                      </span>
-                      <span style={{ fontSize: 10, fontFamily: "'Oswald',sans-serif", color: "var(--or)", flexShrink: 0 }}>{s.client.ciblage}</span>
-                      <button onClick={() => { if (onChercherCreneau) onChercherCreneau(s.client, { type: "date", date: dateKey }); if (setVue) setVue("prochain-rdv"); }}
-                        style={{ background: "var(--or)", border: "none", color: "white", borderRadius: 6, cursor: "pointer", padding: "4px 8px", fontSize: 11, fontFamily: "'Oswald',sans-serif", textTransform: "uppercase", flexShrink: 0 }}>
-                        + Planifier
-                      </button>
-                    </div>
-                  ))}
+                    // RDV Agenda
+                    rdvAgendaJour.forEach(r => {
+                      const heureMin = r.debut ? hhmmToMin(r.debut) : 0;
+                      lignes.push({ type: "agenda", heureMin, r });
+                    });
+
+                    // Trier par heure
+                    lignes.sort((a, b) => a.heureMin - b.heureMin);
+
+                    // Intercaler les suggestions entre les RDV
+                    const result = [];
+                    let suggIdx = 0;
+                    const suggsTriees = [...suggestions]; // déjà triées par distance
+
+                    lignes.forEach((l, i) => {
+                      result.push(l);
+                      // Après chaque RDV, insérer la prochaine suggestion si disponible
+                      if (suggIdx < suggsTriees.length) {
+                        result.push({ type: "suggestion", s: suggsTriees[suggIdx] });
+                        suggIdx++;
+                      }
+                    });
+
+                    // Suggestions restantes à la fin
+                    while (suggIdx < suggsTriees.length) {
+                      result.push({ type: "suggestion", s: suggsTriees[suggIdx] });
+                      suggIdx++;
+                    }
+
+                    return result.map((l, idx) => {
+                      if (l.type === "tournee") {
+                        const { heureAff, heureInp, item } = l;
+                        return (
+                          <div key={item.client.id} style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 4px", borderBottom: "1px dashed var(--gris-clair)" }}>
+                            <span style={{ width: 8, height: 8, borderRadius: "50%", background: PRESSION_COLOR[item.client.pression] || "var(--gris)", flexShrink: 0 }} />
+                            <span style={{ fontFamily: "'Oswald',sans-serif", fontWeight: 600, fontSize: 13, minWidth: 42, color: "var(--ardoise)", flexShrink: 0 }}>{heureAff}</span>
+                            <span style={{ flex: 1, fontWeight: 600, fontSize: 12.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", color: "var(--ardoise)", cursor: "pointer" }}
+                              onClick={() => onOuvrirFiche && onOuvrirFiche(item.client)}>
+                              {item.client.etablissement}
+                            </span>
+                            <div style={{ display: "flex", gap: 3, flexShrink: 0 }}>
+                              <BoutonAgenda pharmacie={item.client} date={dateKey} heure={heureInp} duree={item.client.dureeDefaut || 45} onSave={(rdv) => setAgendaRdvs((prev) => [...(prev || []), rdv])} />
+                              <button title="Lapin" onClick={() => ouvrirPlanB(dateKey, item)}
+                                style={{ background: "transparent", border: "1.5px solid var(--ardoise)", color: "var(--ardoise)", borderRadius: 6, cursor: "pointer", padding: "4px 6px", display: "inline-flex", alignItems: "center" }}>
+                                <ShieldAlert size={11} />
+                              </button>
+                              <button title="Supprimer" onClick={() => { if (window.confirm("Supprimer " + item.client.etablissement + " ?")) supprimerVisite(dateKey, item.client.id); }}
+                                style={{ background: "transparent", border: "1.5px solid var(--rouge)", color: "var(--rouge)", borderRadius: 6, cursor: "pointer", padding: "4px 6px", display: "inline-flex", alignItems: "center" }}>
+                                <X size={11} />
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      }
+                      if (l.type === "agenda") {
+                        const { r } = l;
+                        const heureAff = r.debut ? r.debut.replace(":", "h") : "—";
+                        const titre = r.titre || "RDV Agenda";
+                        const isPersonnel = r.type === "personal" || r.source === "google";
+                        return (
+                          <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 8px", borderBottom: "1px dashed var(--gris-clair)", borderLeft: "3px solid " + (isPersonnel ? "var(--gris)" : "var(--vert)"), background: "var(--vert-clair)", borderRadius: "0 6px 6px 0" }}>
+                            <span style={{ fontFamily: "'Oswald',sans-serif", fontWeight: 600, fontSize: 13, minWidth: 42, color: "var(--ardoise)", flexShrink: 0 }}>{heureAff}</span>
+                            <span style={{ flex: 1, fontWeight: 600, fontSize: 12.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{titre}</span>
+                            <span style={{ fontSize: 10, color: isPersonnel ? "var(--gris)" : "var(--vert)", fontWeight: 600, flexShrink: 0 }}>{isPersonnel ? "Perso" : "Agenda"}</span>
+                            <button title="Supprimer" onClick={() => { if (window.confirm("Supprimer " + titre + " ?")) supprimerRdvAgenda(r.id); }}
+                              style={{ background: "transparent", border: "1.5px solid var(--rouge)", color: "var(--rouge)", borderRadius: 6, cursor: "pointer", padding: "4px 6px", display: "inline-flex", alignItems: "center", flexShrink: 0 }}>
+                              <X size={11} />
+                            </button>
+                          </div>
+                        );
+                      }
+                      if (l.type === "suggestion") {
+                        const { s } = l;
+                        return (
+                          <div key={"sugg-" + s.client.id} style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 8px", borderLeft: "3px solid var(--or)", background: "#FFFBEC", borderRadius: "0 6px 6px 0", marginTop: 1 }}>
+                            <span style={{ fontSize: 13, flexShrink: 0 }}>💡</span>
+                            <span style={{ flex: 1, fontSize: 12.5, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", color: "var(--ardoise)" }}>
+                              {s.client.etablissement}
+                              <span style={{ fontWeight: 400, color: "var(--gris)", marginLeft: 5 }}>{s.trajet} min</span>
+                            </span>
+                            <span style={{ fontSize: 10, fontFamily: "'Oswald',sans-serif", color: "var(--or)", flexShrink: 0 }}>{s.client.ciblage}</span>
+                            <button onClick={() => { if (onChercherCreneau) onChercherCreneau(s.client, { type: "date", date: dateKey }); if (setVue) setVue("prochain-rdv"); }}
+                              style={{ background: "var(--or)", border: "none", color: "white", borderRadius: 6, cursor: "pointer", padding: "4px 8px", fontSize: 11, fontFamily: "'Oswald',sans-serif", textTransform: "uppercase", flexShrink: 0 }}>
+                              + Planifier
+                            </button>
+                          </div>
+                        );
+                      }
+                      return null;
+                    });
+                  })()}
                 </div>
               </div>
             );
