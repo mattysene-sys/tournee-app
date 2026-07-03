@@ -132,7 +132,6 @@ export default function BoutonAgenda({ pharmacie, date, heure = '09:00', duree =
               style={styles.input}
             >
               <option value={15}>15 min</option>
-              <option value={20}>20 min</option>
               <option value={30}>30 min</option>
               <option value={45}>45 min</option>
               <option value={60}>1h</option>
