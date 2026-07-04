@@ -1,6 +1,6 @@
 // src/components/BoutonAgenda.jsx
 import React, { useState } from 'react';
-import { useGoogleCalendar } from '../hameçons/useGoogleCalendar';
+import { useGoogleCalendar } from '../hooks/useGoogleCalendar';
 
 /**
  * Bouton à placer sur une fiche pharmacie.
