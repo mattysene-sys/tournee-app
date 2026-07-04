@@ -2,10 +2,9 @@ import React, { useState, useEffect, useCallback, useRef } from "react";
 import * as XLSX from "xlsx";
 import { MapPin, Clock, Upload, RefreshCw, Calendar, AlertCircle, CheckCircle2, Sparkles, Trophy, ShieldAlert, Phone, Mail, History, X, Search, ChevronDown, ChevronLeft, ChevronRight, Plus } from "lucide-react";
 import AgendaView from "./AgendaView";
-import AssistantVocal from "./composants/AssistantVocal";
-import FicheClient, { BadgeContactManquant } from "./composants/FicheClient";
-import RelevePrix from "./composants/RelevePrix";
-import BoutonAgenda from "./composants/BoutonAgenda";
+import AssistantVocal from "./components/AssistantVocal";
+import FicheClient, { BadgeContactManquant } from "./components/FicheClient";
+import BoutonAgenda from "./components/BoutonAgenda";
 
 // ============================================================
 // Constantes
@@ -1167,7 +1166,6 @@ function App({ code, onDeconnecter }) {
             <button className={`tr-tab ${vue === "prochain-rdv" ? "active" : ""}`} onClick={() => setVue("prochain-rdv")} disabled={clients.length === 0}>Prochain RDV</button>
             <button className={`tr-tab ${vue === "semaine" ? "active" : ""}`} onClick={() => setVue("semaine")} disabled={clients.length === 0}>Ma semaine</button>
             <button className={`tr-tab ${vue === "agenda" ? "active" : ""}`} onClick={() => setVue("agenda")} disabled={clients.length === 0}>Agenda</button>
-            <button className={`tr-tab ${vue === "releve-prix" ? "active" : ""}`} onClick={() => setVue("releve-prix")} disabled={clients.length === 0}>📸 Prix</button>
             <button className="tr-tab" onClick={onDeconnecter} title="Changer d'espace">⎋</button>
           </div>
         </header>
@@ -1417,11 +1415,6 @@ function App({ code, onDeconnecter }) {
             onChercherCreneau={chercherCreneau}
             setVue={setVue}
           />
-        )}
-
-        {/* VUE : RELEVÉ PRIX */}
-        {vue === "releve-prix" && (
-          <RelevePrix clients={clients} codeTournee={code} />
         )}
 
         {/* VUE : AGENDA */}
