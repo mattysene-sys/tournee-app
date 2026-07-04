@@ -2,10 +2,10 @@ import React, { useState, useEffect, useCallback, useRef } from "react";
 import * as XLSX from "xlsx";
 import { MapPin, Clock, Upload, RefreshCw, Calendar, AlertCircle, CheckCircle2, Sparkles, Trophy, ShieldAlert, Phone, Mail, History, X, Search, ChevronDown, ChevronLeft, ChevronRight, Plus } from "lucide-react";
 import AgendaView from "./AgendaView";
-import AssistantVocal from "./components/AssistantVocal";
-import FicheClient, { BadgeContactManquant } from "./components/FicheClient";
-import RelevePrix from "./components/RelevePrix";
-import BoutonAgenda from "./components/BoutonAgenda";
+import AssistantVocal from "./composants/AssistantVocal";
+import FicheClient, { BadgeContactManquant } from "./composants/FicheClient";
+import RelevePrix from "./composants/RelevePrix";
+import BoutonAgenda from "./composants/BoutonAgenda";
 
 // ============================================================
 // Constantes
