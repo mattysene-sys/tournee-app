@@ -1,6 +1,6 @@
 import React, { useState, useRef, useCallback } from "react";
 import { ChevronLeft, ChevronRight, Plus, X, Calendar, RefreshCw, CheckCircle2, Clock, Send } from "lucide-react";
-import { useGoogleCalendar } from "./hameçons/useGoogleCalendar";
+import { useGoogleCalendar } from "./hooks/useGoogleCalendar";
 
 const HEURES_DEBUT = 8;
 const HEURES_FIN = 19;
