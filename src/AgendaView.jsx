@@ -87,7 +87,7 @@ function ModalRdv({ rdv, onSave, onDelete, onClose, isTournee, clients = [] }) {
   const [type,          setType]          = useState(rdv?.type  || "rdv");
   const [jour,          setJour]          = useState(rdv?.jour  || "");
   const [debut,         setDebut]         = useState(rdv?.debut || "09:00");
-  const [fin,           setFin]           = useState(rdv?.fin   || "09:30");
+  const [fin,           setFin]           = useState(rdv?.fin   || "09:45");
   const [rechercheClient, setRechercheClient] = useState("");
   const [clientChoisi,  setClientChoisi]  = useState(null);
   const [showSuggestions, setShowSuggestions] = useState(false);
@@ -103,12 +103,22 @@ function ModalRdv({ rdv, onSave, onDelete, onClose, isTournee, clients = [] }) {
       ).slice(0, 6)
     : [];
 
+  function ajouterMinutes(hhmm, minutes) {
+    const [h, m] = hhmm.split(":").map(Number);
+    const total = h * 60 + m + minutes;
+    const fh = Math.floor(total / 60) % 24;
+    const fm = ((total % 60) + 60) % 60;
+    return `${String(fh).padStart(2,"0")}:${String(fm).padStart(2,"0")}`;
+  }
+
   function choisirClient(client) {
     setClientChoisi(client);
     setTitre(client.etablissement);
     setRechercheClient(client.etablissement);
     setShowSuggestions(false);
     setType("tournee");
+    // Aligner automatiquement la durée sur la durée par défaut du client (45 min)
+    setFin(ajouterMinutes(debut, client.dureeDefaut || 45));
   }
 
   function effacerClient() {
@@ -360,6 +370,7 @@ function PanneauExport({ rdvParJourCalcule, agendaRdvs, totalRdvPlanifies, isRea
   const [statut, setStatut] = useState(null);
   const [progress, setProgress] = useState({ fait: 0, total: 0 });
   const [erreurs, setErreurs] = useState([]);
+  const [connexionStatut, setConnexionStatut] = useState(null);
 
   const tousRdvs = [];
 
@@ -461,12 +472,23 @@ function PanneauExport({ rdvParJourCalcule, agendaRdvs, totalRdvPlanifies, isRea
     });
   }
 
+  async function handleConnecter() {
+    setConnexionStatut("connexion");
+    try {
+      await authorize();
+      setConnexionStatut(null);
+    } catch (err) {
+      setConnexionStatut("erreur");
+      setErreurs([err?.message || "Connexion Google Agenda impossible"]);
+    }
+  }
+
   async function envoyer() {
     const aEnvoyer = tousRdvs.filter(r => selectionIds.has(r.key));
     if (aEnvoyer.length === 0) return;
 
     if (!isReady) {
-      await authorize();
+      await handleConnecter();
       return;
     }
 
@@ -504,11 +526,16 @@ function PanneauExport({ rdvParJourCalcule, agendaRdvs, totalRdvPlanifies, isRea
 
       {/* Connexion Google si pas encore fait */}
       {!isReady && (
-        <div style={{ background:"#FBF0E9", border:"1px solid #E8714A", borderRadius:8, padding:"10px 12px", marginBottom:12, display:"flex", alignItems:"center", justifyContent:"space-between", gap:10 }}>
+        <div style={{ background:"#FBF0E9", border:"1px solid #E8714A", borderRadius:8, padding:"10px 12px", marginBottom:12, display:"flex", alignItems:"center", justifyContent:"space-between", gap:10, flexWrap:"wrap" }}>
           <span style={{ fontSize:12.5, color:"#993C1D" }}>Connecte ton Google Agenda pour envoyer les visites</span>
-          <button onClick={authorize} style={{ ...btnBase, background:"#E8714A", color:"white", whiteSpace:"nowrap" }}>
-            📅 Connecter
+          <button onClick={handleConnecter} disabled={connexionStatut === "connexion"} style={{ ...btnBase, background: connexionStatut === "connexion" ? "#DCD7CB" : "#E8714A", color: connexionStatut === "connexion" ? "#8A93A0" : "white", whiteSpace:"nowrap" }}>
+            📅 {connexionStatut === "connexion" ? "Connexion..." : "Connecter"}
           </button>
+        </div>
+      )}
+      {connexionStatut === "erreur" && (
+        <div style={{ fontSize:12, color:"#8A3530", background:"#FCEEED", borderRadius:7, padding:"8px 11px", marginBottom:12 }}>
+          Échec de connexion : {erreurs[0] || "réessaie, ou vérifie que les pop-ups ne sont pas bloquées par le navigateur."}
         </div>
       )}
       {isReady && (
@@ -837,7 +864,7 @@ export default function AgendaView({ planning, rdvParJourCalcule, agendaRdvs, se
           <div style={{ borderRight:"1px solid #DCD7CB" }}/>
           {jours.map((jour,i)=>(
             <div key={i} style={{ padding:"8px 4px", textAlign:"center", borderRight:i<4?"1px solid #DCD7CB":"none", cursor:"pointer" }}
-              onClick={()=>setModalRdv({ rdv:{ jour:dateToKey(jour), debut:"09:00", fin:"09:30", type:"rdv" }, isTournee:false })}>
+              onClick={()=>setModalRdv({ rdv:{ jour:dateToKey(jour), debut:"09:00", fin:"09:45", type:"rdv" }, isTournee:false })}>
               <div style={{ fontSize:10, color:"#8A93A0", textTransform:"uppercase", letterSpacing:"0.5px", marginBottom:2 }}>{JOURS_SEMAINE[i]}</div>
               <div style={{ fontSize:18, fontFamily:"'Oswald',sans-serif", fontWeight:600, width:30, height:30, borderRadius:"50%", margin:"0 auto", display:"flex", alignItems:"center", justifyContent:"center", background:isToday(jour)?"#E8714A":"transparent", color:isToday(jour)?"white":"#1C2630" }}>{jour.getDate()}</div>
             </div>
@@ -868,7 +895,7 @@ export default function AgendaView({ planning, rdvParJourCalcule, agendaRdvs, se
                     const h = Math.floor(dmin/60); const m = dmin%60;
                     const topPx = (dmin - HEURES_DEBUT*60)/60*HAUTEUR_HEURE;
                     const debutStr = `${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}`;
-                    const finMin = dmin + 30;
+                    const finMin = dmin + 45;
                     const finStr = `${String(Math.floor(finMin/60)).padStart(2,"0")}:${String(finMin%60).padStart(2,"0")}`;
                     return (
                       <div key={dmin} style={{ position:"absolute", left:0, right:0, top:topPx, height:HAUTEUR_HEURE/2, borderBottom: m===0 ? "1px solid #F0EDE7" : "1px dashed #F5F2EC", cursor:"pointer" }}
@@ -910,7 +937,7 @@ export default function AgendaView({ planning, rdvParJourCalcule, agendaRdvs, se
         </div>
       </div>
 
-      <button onClick={()=>setModalRdv({ rdv:{ jour:dateToKey(new Date()), debut:"09:00", fin:"09:30", type:"rdv" }, isTournee:false })}
+      <button onClick={()=>setModalRdv({ rdv:{ jour:dateToKey(new Date()), debut:"09:00", fin:"09:45", type:"rdv" }, isTournee:false })}
         style={{ position:"fixed", bottom:24, right:24, width:48, height:48, borderRadius:"50%", background:"#E8714A", color:"white", border:"none", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", boxShadow:"0 4px 16px rgba(232,113,74,0.4)", zIndex:100 }}>
         <Plus size={22}/>
       </button>
