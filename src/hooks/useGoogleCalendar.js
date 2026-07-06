@@ -1,32 +1,46 @@
 // src/hooks/useGoogleCalendar.js
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 
 const CLIENT_ID = '185834811620-ai8nof64ohu3792boete33h42i4skr3a.apps.googleusercontent.com';
 const SCOPES = 'https://www.googleapis.com/auth/calendar.events';
 
 let tokenClient = null;
 let accessToken = null;
+let scriptLoadPromise = null;
+
+function loadGoogleScriptOnce() {
+  if (scriptLoadPromise) return scriptLoadPromise;
+  scriptLoadPromise = new Promise((resolve) => {
+    if (window.google?.accounts) { resolve(); return; }
+    const script = document.createElement('script');
+    script.src = 'https://accounts.google.com/gsi/client';
+    script.onload = resolve;
+    document.body.appendChild(script);
+  });
+  return scriptLoadPromise;
+}
 
 export function useGoogleCalendar() {
   const [isReady, setIsReady] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
 
-  const loadGoogleScript = useCallback(() => {
-    return new Promise((resolve) => {
-      if (window.google?.accounts) { resolve(); return; }
-      const script = document.createElement('script');
-      script.src = 'https://accounts.google.com/gsi/client';
-      script.onload = resolve;
-      document.body.appendChild(script);
-    });
+  // Précharger le script Google dès que le composant qui utilise ce hook est monté,
+  // pour que le popup d'autorisation puisse s'ouvrir immédiatement au clic
+  // (sinon le navigateur bloque silencieusement le popup si trop de temps s'écoule
+  // entre le clic utilisateur et l'ouverture du popup).
+  useEffect(() => {
+    loadGoogleScriptOnce();
   }, []);
 
   const authorize = useCallback(async () => {
     setIsLoading(true);
     setError(null);
     try {
-      await loadGoogleScript();
+      // Le script est normalement déjà chargé (préchargé au montage).
+      // On attend quand même par sécurité si ce n'est pas encore le cas,
+      // mais dans l'immense majorité des cas cela résout instantanément.
+      await loadGoogleScriptOnce();
       await new Promise((resolve, reject) => {
         tokenClient = window.google.accounts.oauth2.initTokenClient({
           client_id: CLIENT_ID,
@@ -35,15 +49,21 @@ export function useGoogleCalendar() {
             if (response.error) { reject(new Error(response.error)); }
             else { accessToken = response.access_token; setIsReady(true); resolve(); }
           },
+          error_callback: (err) => {
+            reject(new Error(err?.type === 'popup_failed_to_open'
+              ? "Le popup d'autorisation Google a été bloqué par le navigateur. Autorise les pop-ups pour ce site puis réessaie."
+              : (err?.message || 'Autorisation Google annulée ou impossible.')));
+          },
         });
         tokenClient.requestAccessToken({ prompt: 'consent' });
       });
     } catch (err) {
       setError(err.message);
+      throw err;
     } finally {
       setIsLoading(false);
     }
-  }, [loadGoogleScript]);
+  }, []);
 
   function buildEvent({ pharmacie, date, heure = '09:00', duree = 30, notes = '' }) {
     const [annee, mois, jour] = date.split('-');
