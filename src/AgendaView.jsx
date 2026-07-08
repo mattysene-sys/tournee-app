@@ -616,6 +616,8 @@ function PanneauExport({ rdvParJourCalcule, agendaRdvs, totalRdvPlanifies, isRea
 // ─── Composant principal ──────────────────────────────────────────────────────
 export default function AgendaView({ planning, rdvParJourCalcule, agendaRdvs, setAgendaRdvs, clients = [], supprimerVisiteTournee }) {
   const [semaineOffset, setSemaineOffset] = useState(0);
+  const [moisOffset, setMoisOffset]       = useState(0);
+  const [vueCalendrier, setVueCalendrier] = useState("semaine"); // "semaine" | "mois"
   const [modalRdv, setModalRdv]           = useState(null);
   const [googleEvents, setGoogleEvents]   = useState(() => { try { return JSON.parse(localStorage.getItem("tournee_google_events") || "[]"); } catch { return []; } });
   const [showConfig, setShowConfig]       = useState(false);
@@ -634,6 +636,26 @@ export default function AgendaView({ planning, rdvParJourCalcule, agendaRdvs, se
   const jours  = Array.from({length:5},(_,i)=>{ const d=new Date(lundi); d.setDate(lundi.getDate()+i); return d; });
   const numSem = getNumSemaine(lundi);
   const rangeDates = `${lundi.getDate()} – ${jours[4].getDate()} ${lundi.toLocaleString("fr-FR",{month:"long"})} ${lundi.getFullYear()}`;
+
+  // ── Grille mensuelle ──
+  const moisRef = new Date();
+  moisRef.setDate(1);
+  moisRef.setMonth(moisRef.getMonth() + moisOffset);
+  const premierJourMois = new Date(moisRef);
+  const nomMois = premierJourMois.toLocaleString("fr-FR", { month:"long", year:"numeric" });
+  const decalageLundi = (premierJourMois.getDay() + 6) % 7; // 0 = lundi
+  const debutGrilleMois = new Date(premierJourMois);
+  debutGrilleMois.setDate(debutGrilleMois.getDate() - decalageLundi);
+  const joursGrilleMois = Array.from({ length: 42 }, (_, i) => { const d = new Date(debutGrilleMois); d.setDate(debutGrilleMois.getDate() + i); return d; });
+
+  function allerVersSemaineDuJour(jour) {
+    const lundiCible = getLundi(0);
+    const lundiDuJour = new Date(jour);
+    lundiDuJour.setDate(jour.getDate() - ((jour.getDay()+6)%7));
+    const offset = Math.round((lundiDuJour - lundiCible) / (7 * 86400000));
+    setSemaineOffset(offset);
+    setVueCalendrier("semaine");
+  }
 
   function importerEvents(events) {
     setGoogleEvents(events);
@@ -814,10 +836,22 @@ export default function AgendaView({ planning, rdvParJourCalcule, agendaRdvs, se
       {/* En-tête */}
       <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:14, flexWrap:"wrap", gap:10 }}>
         <div>
-          <div style={{ fontFamily:"'Oswald',sans-serif", textTransform:"uppercase", fontSize:18, fontWeight:600 }}>Semaine {numSem}</div>
-          <div style={{ fontSize:12, color:"#8A93A0", marginTop:2 }}>{rangeDates}</div>
+          <div style={{ fontFamily:"'Oswald',sans-serif", textTransform:"uppercase", fontSize:18, fontWeight:600 }}>
+            {vueCalendrier === "semaine" ? `Semaine ${numSem}` : nomMois.charAt(0).toUpperCase() + nomMois.slice(1)}
+          </div>
+          <div style={{ fontSize:12, color:"#8A93A0", marginTop:2 }}>{vueCalendrier === "semaine" ? rangeDates : ""}</div>
         </div>
         <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
+          <div style={{ display:"flex", background:"#F5F2EC", borderRadius:6, padding:3, gap:2 }}>
+            <button onClick={()=>setVueCalendrier("semaine")}
+              style={{ fontFamily:"'Oswald',sans-serif", textTransform:"uppercase", fontSize:11, padding:"6px 12px", borderRadius:5, border:"none", cursor:"pointer", background: vueCalendrier==="semaine" ? "#1C2630" : "transparent", color: vueCalendrier==="semaine" ? "white" : "#8A93A0" }}>
+              Semaine
+            </button>
+            <button onClick={()=>setVueCalendrier("mois")}
+              style={{ fontFamily:"'Oswald',sans-serif", textTransform:"uppercase", fontSize:11, padding:"6px 12px", borderRadius:5, border:"none", cursor:"pointer", background: vueCalendrier==="mois" ? "#1C2630" : "transparent", color: vueCalendrier==="mois" ? "white" : "#8A93A0" }}>
+              Mois
+            </button>
+          </div>
           <button onClick={()=>{ setShowExportPanel(s=>!s); }} disabled={totalRdvPlanifies === 0}
             style={{ fontFamily:"'Oswald',sans-serif", textTransform:"uppercase", fontSize:11, padding:"7px 12px", borderRadius:6, border:"1.5px solid #185FA5", background:"#E6F1FB", color:"#0C447C", cursor:"pointer", display:"flex", alignItems:"center", gap:5, opacity: totalRdvPlanifies===0 ? 0.4 : 1 }}>
             <Send size={12}/> Envoyer planning ({totalRdvPlanifies})
@@ -826,9 +860,9 @@ export default function AgendaView({ planning, rdvParJourCalcule, agendaRdvs, se
             style={{ fontFamily:"'Oswald',sans-serif", textTransform:"uppercase", fontSize:11, padding:"7px 12px", borderRadius:6, border:"1.5px solid", borderColor:googleEvents.length>0?"#5B8C6E":"#DCD7CB", background:googleEvents.length>0?"#DCEAE0":"white", color:googleEvents.length>0?"#5B8C6E":"#8A93A0", cursor:"pointer", display:"flex", alignItems:"center", gap:5 }}>
             <Calendar size={13}/>{googleEvents.length>0?`Google (${googleEvents.length})` :"Importer .ics"}
           </button>
-          <button onClick={()=>setSemaineOffset(0)} style={{ fontFamily:"'Oswald',sans-serif", fontSize:11, padding:"7px 12px", borderRadius:6, border:"1.5px solid #DCD7CB", background:"white", color:"#8A93A0", cursor:"pointer" }}>Aujourd'hui</button>
-          <button onClick={()=>setSemaineOffset(s=>s-1)} style={{ padding:"7px 10px", borderRadius:6, border:"1.5px solid #DCD7CB", background:"white", cursor:"pointer" }}><ChevronLeft size={16}/></button>
-          <button onClick={()=>setSemaineOffset(s=>s+1)} style={{ padding:"7px 10px", borderRadius:6, border:"1.5px solid #DCD7CB", background:"white", cursor:"pointer" }}><ChevronRight size={16}/></button>
+          <button onClick={()=>{ setSemaineOffset(0); setMoisOffset(0); }} style={{ fontFamily:"'Oswald',sans-serif", fontSize:11, padding:"7px 12px", borderRadius:6, border:"1.5px solid #DCD7CB", background:"white", color:"#8A93A0", cursor:"pointer" }}>Aujourd'hui</button>
+          <button onClick={()=> vueCalendrier==="semaine" ? setSemaineOffset(s=>s-1) : setMoisOffset(s=>s-1)} style={{ padding:"7px 10px", borderRadius:6, border:"1.5px solid #DCD7CB", background:"white", cursor:"pointer" }}><ChevronLeft size={16}/></button>
+          <button onClick={()=> vueCalendrier==="semaine" ? setSemaineOffset(s=>s+1) : setMoisOffset(s=>s+1)} style={{ padding:"7px 10px", borderRadius:6, border:"1.5px solid #DCD7CB", background:"white", cursor:"pointer" }}><ChevronRight size={16}/></button>
         </div>
       </div>
 
@@ -865,6 +899,7 @@ export default function AgendaView({ planning, rdvParJourCalcule, agendaRdvs, se
       </div>
 
       {/* Grille */}
+      {vueCalendrier === "semaine" ? (
       <div ref={gridRef} style={{ background:"white", border:"1px solid #DCD7CB", borderRadius:10, overflow:"hidden" }} onDragOver={handleDragOver} onDrop={handleDrop}>
         <div style={{ display:"grid", gridTemplateColumns:`44px repeat(5,1fr)`, borderBottom:"1px solid #DCD7CB" }}>
           <div style={{ borderRight:"1px solid #DCD7CB" }}/>
@@ -942,6 +977,56 @@ export default function AgendaView({ planning, rdvParJourCalcule, agendaRdvs, se
           </div>
         </div>
       </div>
+      ) : (
+        <div style={{ background:"white", border:"1px solid #DCD7CB", borderRadius:10, overflow:"hidden" }}>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(7,1fr)", borderBottom:"1px solid #DCD7CB" }}>
+            {["Lun","Mar","Mer","Jeu","Ven","Sam","Dim"].map((j,i) => (
+              <div key={i} style={{ padding:"8px 4px", textAlign:"center", fontSize:10, color:"#8A93A0", textTransform:"uppercase", letterSpacing:"0.5px", borderRight:i<6?"1px solid #DCD7CB":"none" }}>{j}</div>
+            ))}
+          </div>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(7,1fr)", gridTemplateRows:"repeat(6,1fr)" }}>
+            {joursGrilleMois.map((jour, idx) => {
+              const dateKey = dateToKey(jour);
+              const rdvs = tousLesRdv(dateKey);
+              const horsMois = jour.getMonth() !== premierJourMois.getMonth();
+              return (
+                <div key={idx} onClick={() => setModalRdv({ rdv:{ jour:dateKey, debut:"09:00", fin:"09:45", type:"rdv" }, isTournee:false })}
+                  style={{
+                    minHeight:96, padding:"6px 6px 8px", cursor:"pointer",
+                    borderRight: (idx % 7) < 6 ? "1px solid #F0EDE7" : "none",
+                    borderBottom: idx < 35 ? "1px solid #F0EDE7" : "none",
+                    background: horsMois ? "#FAFAF8" : "white",
+                    opacity: horsMois ? 0.5 : 1,
+                  }}>
+                  <div style={{
+                    width:22, height:22, borderRadius:"50%", display:"flex", alignItems:"center", justifyContent:"center",
+                    fontSize:12, fontFamily:"'Oswald',sans-serif", fontWeight:600, marginBottom:4,
+                    background: isToday(jour) ? "#E8714A" : "transparent",
+                    color: isToday(jour) ? "white" : "#1C2630",
+                  }}
+                  onClick={(e) => { e.stopPropagation(); allerVersSemaineDuJour(jour); }}>
+                    {jour.getDate()}
+                  </div>
+                  <div style={{ display:"flex", flexDirection:"column", gap:2 }}>
+                    {rdvs.slice(0, 3).map(rdv => {
+                      const c = TYPE_COLORS[rdv.type] || TYPE_COLORS.rdv;
+                      return (
+                        <div key={rdv.id} onClick={(e) => { e.stopPropagation(); if (rdv.type === "google") return; setModalRdv({ rdv, isTournee: rdv.isTournee }); }}
+                          style={{ fontSize:9.5, padding:"1px 4px", borderRadius:3, background:c.bg, borderLeft:`2px solid ${c.border}`, color:c.text, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>
+                          {rdv.titre}
+                        </div>
+                      );
+                    })}
+                    {rdvs.length > 3 && (
+                      <div style={{ fontSize:9.5, color:"#8A93A0", paddingLeft:4 }}>+{rdvs.length - 3} autre{rdvs.length - 3 > 1 ? "s" : ""}</div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       <button onClick={()=>setModalRdv({ rdv:{ jour:dateToKey(new Date()), debut:"09:00", fin:"09:45", type:"rdv" }, isTournee:false })}
         style={{ position:"fixed", bottom:24, right:24, width:48, height:48, borderRadius:"50%", background:"#E8714A", color:"white", border:"none", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", boxShadow:"0 4px 16px rgba(232,113,74,0.4)", zIndex:100 }}>
