@@ -170,6 +170,36 @@ async function codeExisteDeja(code) {
 }
 
 // ============================================================
+// Propositions de créneaux (réservation client par email)
+// ============================================================
+async function creerPropositionRdv({ code, clientId, clientNom, creneaux }) {
+  const res = await supabaseFetch(`propositions_rdv`, {
+    method: "POST",
+    headers: { Prefer: "return=representation" },
+    body: JSON.stringify({ code, client_id: clientId, client_nom: clientNom, creneaux, statut: "en_attente" }),
+  });
+  if (!res.ok) return null;
+  const rows = await res.json();
+  return rows[0] || null;
+}
+
+async function chargerPropositionRdv(id) {
+  const res = await supabaseFetch(`propositions_rdv?id=eq.${id}&select=*`);
+  if (!res.ok) return null;
+  const rows = await res.json();
+  return rows[0] || null;
+}
+
+async function confirmerPropositionRdv(id, choix) {
+  const res = await supabaseFetch(`propositions_rdv?id=eq.${id}`, {
+    method: "PATCH",
+    headers: { Prefer: "return=minimal" },
+    body: JSON.stringify({ statut: "confirme", choix }),
+  });
+  return res.ok;
+}
+
+// ============================================================
 // Stockage local
 // ============================================================
 function lireLocal(storageKey, initial) {
@@ -482,10 +512,171 @@ function EcranConnexion({ onConnecte }) {
 }
 
 // ============================================================
+// ============================================================
+// Page publique de réservation (lien envoyé par email au client)
+// ============================================================
+function creneauxSeChevauchent(debutA, finA, debutB, finB) {
+  return hhmmToMin(debutA) < hhmmToMin(finB) && hhmmToMin(debutB) < hhmmToMin(finA);
+}
+
+function PageReservation({ id }) {
+  const [proposition, setProposition] = useState(undefined); // undefined = chargement, null = introuvable
+  const [creneauxEtat, setCreneauxEtat] = useState([]); // [{...creneau, disponible}]
+  const [confirme, setConfirme] = useState(null); // creneau confirmé, ou null
+  const [enCours, setEnCours] = useState(false);
+  const [message, setMessage] = useState("");
+
+  useEffect(() => {
+    (async () => {
+      const prop = await chargerPropositionRdv(id);
+      if (!prop) { setProposition(null); return; }
+      setProposition(prop);
+      if (prop.statut === "confirme" && prop.choix) {
+        setConfirme(prop.choix);
+        return;
+      }
+      await rafraichirDisponibilites(prop);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
+
+  async function rafraichirDisponibilites(prop) {
+    let donnees = null;
+    try { donnees = await chargerDonneesDistantes(prop.code); } catch {}
+    const occupationsParJour = {};
+    (donnees?.agendaRdvs || []).forEach(r => {
+      if (!r.jour || !r.debut || !r.fin) return;
+      (occupationsParJour[r.jour] = occupationsParJour[r.jour] || []).push({ debut: r.debut, fin: r.fin });
+    });
+    Object.keys(donnees?.planning || {}).forEach(jour => {
+      (donnees.planning[jour] || []).forEach(v => {
+        if (v.heureArrivee == null || v.heureFin == null) return;
+        (occupationsParJour[jour] = occupationsParJour[jour] || []).push({ debut: minToHHMMInput(v.heureArrivee), fin: minToHHMMInput(v.heureFin) });
+      });
+    });
+    const enrichis = (prop.creneaux || []).map(c => {
+      const occ = occupationsParJour[c.jour] || [];
+      const dispo = !occ.some(o => creneauxSeChevauchent(c.debut, c.fin, o.debut, o.fin));
+      return { ...c, disponible: dispo };
+    });
+    setCreneauxEtat(enrichis);
+  }
+
+  async function choisirCreneau(creneau) {
+    setEnCours(true);
+    setMessage("");
+    // Revérification en temps réel juste avant de valider, pour éviter un double-booking
+    let donnees = null;
+    try { donnees = await chargerDonneesDistantes(proposition.code); } catch {}
+    const occ = [
+      ...((donnees?.agendaRdvs || []).filter(r => r.jour === creneau.jour).map(r => ({ debut: r.debut, fin: r.fin }))),
+      ...((donnees?.planning?.[creneau.jour] || []).filter(v => v.heureArrivee != null).map(v => ({ debut: minToHHMMInput(v.heureArrivee), fin: minToHHMMInput(v.heureFin) }))),
+    ];
+    const encoreLibre = !occ.some(o => creneauxSeChevauchent(creneau.debut, creneau.fin, o.debut, o.fin));
+
+    if (!encoreLibre) {
+      setMessage("Ce créneau vient d'être pris entre-temps. Merci d'en choisir un autre parmi ceux encore disponibles ci-dessous.");
+      await rafraichirDisponibilites(proposition);
+      setEnCours(false);
+      return;
+    }
+
+    const next = {
+      ...donnees,
+      planning: {
+        ...(donnees?.planning || {}),
+        [creneau.jour]: [...(donnees?.planning?.[creneau.jour] || []), {
+          clientId: proposition.client_id,
+          heureArrivee: hhmmToMin(creneau.debut),
+          heureFin: hhmmToMin(creneau.fin),
+        }],
+      },
+      clients: (donnees?.clients || []).map(c => c.id === proposition.client_id ? { ...c, prochainRdv: creneau.jour, statutRdv: "Fixe" } : c),
+    };
+    const ok = await sauvegarderDonneesDistantes(proposition.code, next);
+    if (ok) {
+      await confirmerPropositionRdv(proposition.id, creneau);
+      setConfirme(creneau);
+    } else {
+      setMessage("Erreur lors de l'enregistrement. Merci de réessayer.");
+    }
+    setEnCours(false);
+  }
+
+  const S2 = {
+    root: { fontFamily:"'Inter',system-ui,sans-serif", background:"#F5F2EC", minHeight:"100vh", color:"#1C2630", display:"flex", alignItems:"center", justifyContent:"center", padding:20 },
+    card: { background:"white", border:"1px solid #DCD7CB", borderRadius:12, padding:26, maxWidth:440, width:"100%" },
+    title: { fontFamily:"'Oswald',sans-serif", fontSize:22, fontWeight:600, textTransform:"uppercase", marginBottom:6 },
+    sub: { fontSize:13, color:"#8A93A0", marginBottom:20 },
+    slot: (dispo) => ({
+      display:"flex", alignItems:"center", justifyContent:"space-between", gap:10,
+      padding:"14px 16px", borderRadius:8, border:"1.5px solid", marginBottom:10,
+      borderColor: dispo ? "#DCD7CB" : "#F0EDE7", background: dispo ? "#F5F2EC" : "#FAFAF8",
+      opacity: dispo ? 1 : 0.55,
+    }),
+    btn: { fontFamily:"'Oswald',sans-serif", textTransform:"uppercase", fontSize:12, padding:"9px 14px", borderRadius:6, border:"none", cursor:"pointer", background:"#E8714A", color:"white", flexShrink:0 },
+  };
+
+  if (proposition === undefined) {
+    return <div style={S2.root}><div style={{ color:"#8A93A0" }}>Chargement...</div></div>;
+  }
+  if (proposition === null) {
+    return (
+      <div style={S2.root}>
+        <div style={S2.card}>
+          <div style={S2.title}>Lien invalide</div>
+          <div style={S2.sub}>Ce lien de réservation n'existe pas ou a expiré. Contacte directement ton interlocuteur.</div>
+        </div>
+      </div>
+    );
+  }
+  if (confirme) {
+    return (
+      <div style={S2.root}>
+        <div style={S2.card}>
+          <div style={S2.title}>✓ Rendez-vous confirmé</div>
+          <div style={{ fontSize:14, marginBottom:4 }}>{proposition.client_nom}</div>
+          <div style={{ fontSize:15, fontWeight:600, marginTop:10 }}>{formatDateFr(confirme.jour)}</div>
+          <div style={{ fontSize:14, color:"#8A93A0" }}>à {confirme.debut.replace(":", "h")}</div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={S2.root}>
+      <div style={S2.card}>
+        <div style={S2.title}>Choisir un créneau</div>
+        <div style={S2.sub}>{proposition.client_nom} — sélectionne le rendez-vous qui te convient</div>
+        {message && <div style={{ background:"#FCEEED", border:"1px solid #C75450", borderRadius:8, padding:"10px 12px", fontSize:13, color:"#8A3530", marginBottom:14 }}>{message}</div>}
+        {creneauxEtat.map((c, i) => (
+          <div key={i} style={S2.slot(c.disponible)}>
+            <div>
+              <div style={{ fontWeight:600, fontSize:14, textTransform:"capitalize" }}>{formatDateFr(c.jour)}</div>
+              <div style={{ fontSize:13, color:"#8A93A0" }}>{c.debut.replace(":", "h")} – {c.fin.replace(":", "h")}</div>
+            </div>
+            {c.disponible ? (
+              <button style={S2.btn} onClick={() => choisirCreneau(c)} disabled={enCours}>
+                {enCours ? "..." : "Choisir"}
+              </button>
+            ) : (
+              <span style={{ fontSize:11, fontFamily:"'Oswald',sans-serif", textTransform:"uppercase", color:"#C75450" }}>Complet</span>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ============================================================
 // Composant racine
 // ============================================================
 export default function Root() {
   const [code, setCode] = useState(() => lireLocal("tournee_code", null));
+  const reservationId = (() => {
+    try { return new URLSearchParams(window.location.search).get("reservation"); } catch { return null; }
+  })();
 
   function seDeconnecter() {
     window.localStorage.removeItem("tournee_code");
@@ -497,6 +688,7 @@ export default function Root() {
     setCode(c);
   }
 
+  if (reservationId) return <PageReservation id={reservationId} />;
   if (!code) return <EcranConnexion onConnecte={onConnecte} />;
   return <App code={code} onDeconnecter={seDeconnecter} />;
 }
@@ -601,6 +793,8 @@ function App({ code, onDeconnecter }) {
   const [clientSelectionne, setClientSelectionne] = useState(null);
   const [suggestions, setSuggestions] = useState(null);
   const [calcEnCours, setCalcEnCours] = useState(false);
+  const [creneauxAProposer, setCreneauxAProposer] = useState(new Set());
+  const [envoiEmailEnCours, setEnvoiEmailEnCours] = useState(false);
   const [modeRecherche, setModeRecherche] = useState("urgent");
   const [horizonJours, setHorizonJours] = useState(90);
   const [dateChoisie, setDateChoisie] = useState("");
@@ -775,6 +969,7 @@ function App({ code, onDeconnecter }) {
     setErreur("");
     setSuggestions(null);
     setCreneauRetenu(null);
+    setCreneauxAProposer(new Set());
     const duree = dureeVoulue || client.dureeDefaut || 45;
     if (!client.coords) {
       setErreur(`${client.etablissement} n'est pas localisé. Relance le géocodage ou vérifie son adresse.`);
@@ -965,9 +1160,9 @@ function App({ code, onDeconnecter }) {
     if (mode.type === "urgent" || mode.type === "suivi" || mode.type === "periode") {
       const meilleureParJour = new Map();
       aUtiliser.forEach((s) => { if (!meilleureParJour.has(s.jour)) meilleureParJour.set(s.jour, s); });
-      setSuggestions(Array.from(meilleureParJour.values()).slice(0, 5));
+      setSuggestions(Array.from(meilleureParJour.values()).slice(0, 7));
     } else {
-      setSuggestions(aUtiliser.slice(0, 5));
+      setSuggestions(aUtiliser.slice(0, 7));
     }
   }
 
@@ -991,6 +1186,45 @@ function App({ code, onDeconnecter }) {
     setSuggIdxOuvert(null);
   }
 
+
+  function toggleCreneauAProposer(idx) {
+    setCreneauxAProposer(prev => {
+      const next = new Set(prev);
+      if (next.has(idx)) next.delete(idx);
+      else next.add(idx);
+      return next;
+    });
+  }
+
+  async function envoyerPropositionEmail() {
+    if (!clientSelectionne || creneauxAProposer.size === 0 || !suggestions) return;
+    setEnvoiEmailEnCours(true);
+    const creneaux = Array.from(creneauxAProposer).sort((a,b)=>a-b).map(idx => {
+      const s = suggestions[idx];
+      return { jour: s.jour, debut: minToHHMMInput(s.arrivee), fin: minToHHMMInput(s.fin) };
+    });
+    const proposition = await creerPropositionRdv({
+      code,
+      clientId: clientSelectionne.id,
+      clientNom: clientSelectionne.etablissement,
+      creneaux,
+    });
+    setEnvoiEmailEnCours(false);
+    if (!proposition) {
+      showToast("Erreur lors de la création de la proposition", "error");
+      return;
+    }
+    const lien = `${window.location.origin}${window.location.pathname}?reservation=${proposition.id}`;
+    const listeCreneaux = creneaux.map(c => `- ${formatDateFr(c.jour)} à ${c.debut.replace(":","h")}`).join("\n");
+    const sujet = encodeURIComponent(`Proposition de rendez-vous — ${clientSelectionne.etablissement}`);
+    const corps = encodeURIComponent(
+      `Bonjour,\n\nJe vous propose les créneaux suivants pour notre prochain rendez-vous :\n\n${listeCreneaux}\n\nMerci de choisir le créneau qui vous convient via ce lien :\n${lien}\n\nCordialement`
+    );
+    const destinataire = clientSelectionne.email || "";
+    window.location.href = `mailto:${destinataire}?subject=${sujet}&body=${corps}`;
+    setCreneauxAProposer(new Set());
+    showToast("Email préparé — vérifie ta messagerie", "ok");
+  }
 
   function supprimerVisite(dateKey, clientId) {
     setPlanning((p) => {
@@ -1379,11 +1613,19 @@ function App({ code, onDeconnecter }) {
               )}
               {suggestions && clientSelectionne && !calcEnCours && (
                 <div className="tr-card">
-                  <div className="tr-card-title"><Trophy size={14} /> Top 3 pour {clientSelectionne.etablissement}</div>
+                  <div className="tr-card-title"><Trophy size={14} /> Top {suggestions.length} pour {clientSelectionne.etablissement}</div>
+                  <div style={{ fontSize:11.5, color:"var(--gris)", marginBottom:10, lineHeight:1.5 }}>
+                    Coche un ou plusieurs créneaux pour les proposer par email au client — il pourra choisir directement celui qui lui convient.
+                  </div>
                   <div className="tr-sugg-list">
                     {suggestions.map((s, idx) => (
                       <div key={`${s.jour}-${idx}`} className={`tr-sugg-card ${idx === 0 ? "rang-1" : ""}`}>
-                        <div className="tr-sugg-rank">{idx + 1}</div>
+                        <div style={{ position:"absolute", left:14, top:16, display:"flex", flexDirection:"column", alignItems:"center", gap:6 }}>
+                          <div className="tr-sugg-rank" style={{ position:"static" }}>{idx + 1}</div>
+                          <input type="checkbox" checked={creneauxAProposer.has(idx)} onChange={() => toggleCreneauAProposer(idx)}
+                            style={{ width:18, height:18, cursor:"pointer", accentColor:"var(--orange)" }}
+                            title="Proposer ce créneau par email"/>
+                        </div>
                         <div className="tr-sugg-top">
                           <span className="tr-sugg-jour">{formatDateFr(s.jour)}</span>
                           <span className="tr-sugg-cout">{s.coutSupplementaire <= 0 ? "Sur la route" : `+${formatMin(s.coutSupplementaire)}`}</span>
@@ -1407,7 +1649,13 @@ function App({ code, onDeconnecter }) {
                       </div>
                     ))}
                   </div>
-                  <button className="tr-btn tr-btn-ghost tr-btn-full" style={{ marginTop: 12 }} onClick={() => { setSuggestions(null); setClientSelectionne(null); setSuggIdxOuvert(null); }}>Annuler</button>
+                  {creneauxAProposer.size > 0 && (
+                    <button className="tr-btn tr-btn-full" style={{ marginTop:12, background:"#185FA5", color:"white" }}
+                      onClick={envoyerPropositionEmail} disabled={envoiEmailEnCours}>
+                      <Mail size={14}/> {envoiEmailEnCours ? "Préparation..." : `Proposer ${creneauxAProposer.size} créneau${creneauxAProposer.size>1?"x":""} par email`}
+                    </button>
+                  )}
+                  <button className="tr-btn tr-btn-ghost tr-btn-full" style={{ marginTop: 12 }} onClick={() => { setSuggestions(null); setClientSelectionne(null); setSuggIdxOuvert(null); setCreneauxAProposer(new Set()); }}>Annuler</button>
                 </div>
               )}
             </div>
