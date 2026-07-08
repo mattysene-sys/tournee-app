@@ -614,7 +614,7 @@ function PanneauExport({ rdvParJourCalcule, agendaRdvs, totalRdvPlanifies, isRea
 }
 
 // ─── Composant principal ──────────────────────────────────────────────────────
-export default function AgendaView({ planning, rdvParJourCalcule, agendaRdvs, setAgendaRdvs, clients = [] }) {
+export default function AgendaView({ planning, rdvParJourCalcule, agendaRdvs, setAgendaRdvs, clients = [], supprimerVisiteTournee }) {
   const [semaineOffset, setSemaineOffset] = useState(0);
   const [modalRdv, setModalRdv]           = useState(null);
   const [googleEvents, setGoogleEvents]   = useState(() => { try { return JSON.parse(localStorage.getItem("tournee_google_events") || "[]"); } catch { return []; } });
@@ -708,7 +708,13 @@ export default function AgendaView({ planning, rdvParJourCalcule, agendaRdvs, se
     }
     if (id.startsWith("t-")) {
       const clientId = id.replace("t-","");
-      setAgendaRdvs(prev => (prev||[]).filter(r => !(r.overrideTournee === clientId)));
+      if (supprimerVisiteTournee && rdv?.jour) {
+        // Supprime la visite dans le planning Tournée lui-même (pas seulement son repositionnement),
+        // sinon elle réapparaît à son horaire d'origine calculé.
+        supprimerVisiteTournee(rdv.jour, clientId);
+      } else {
+        setAgendaRdvs(prev => (prev||[]).filter(r => !(r.overrideTournee === clientId)));
+      }
     } else {
       setAgendaRdvs(prev => (prev||[]).filter(r => r.id !== id));
     }
