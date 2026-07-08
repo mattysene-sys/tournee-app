@@ -607,9 +607,8 @@ function App({ code, onDeconnecter }) {
   const [periodeDebut, setPeriodeDebut] = useState("");
   const [periodeFin, setPeriodeFin] = useState("");
   const [dureeRdv, setDureeRdv] = useState(45);
-  const [suggIdxOuvert, setSuggIdxOuvert] = useState(null);
-  const [heureEdit, setHeureEdit] = useState("");
-  const [dureeEdit, setDureeEdit] = useState(45);
+  const heureRefs = useRef({});
+  const dureeRefs = useRef({});
   const [erreur, setErreur] = useState("");
   const [toast, setToast] = useState(null);
   const [rdvAnnule, setRdvAnnule] = useState(null);
@@ -776,7 +775,6 @@ function App({ code, onDeconnecter }) {
     setErreur("");
     setSuggestions(null);
     setCreneauRetenu(null);
-    setSuggIdxOuvert(null);
     const duree = dureeVoulue || client.dureeDefaut || 45;
     if (!client.coords) {
       setErreur(`${client.etablissement} n'est pas localisé. Relance le géocodage ou vérifie son adresse.`);
@@ -971,12 +969,6 @@ function App({ code, onDeconnecter }) {
     } else {
       setSuggestions(aUtiliser.slice(0, 5));
     }
-  }
-
-  function ouvrirEditionSuggestion(idx, sugg) {
-    setSuggIdxOuvert(idx);
-    setHeureEdit(minToHHMMInput(sugg.arrivee));
-    setDureeEdit(sugg.duree || 45);
   }
 
   function retenirCreneau(sugg, heureOverride, dureeOverride) {
@@ -1390,30 +1382,28 @@ function App({ code, onDeconnecter }) {
                   <div className="tr-card-title"><Trophy size={14} /> Top 3 pour {clientSelectionne.etablissement}</div>
                   <div className="tr-sugg-list">
                     {suggestions.map((s, idx) => (
-                      <div key={`${s.jour}-${idx}`} className={`tr-sugg-card ${idx === 0 ? "rang-1" : ""}`} onClick={() => { if (suggIdxOuvert !== idx) ouvrirEditionSuggestion(idx, s); }}>
+                      <div key={`${s.jour}-${idx}`} className={`tr-sugg-card ${idx === 0 ? "rang-1" : ""}`}>
                         <div className="tr-sugg-rank">{idx + 1}</div>
                         <div className="tr-sugg-top">
                           <span className="tr-sugg-jour">{formatDateFr(s.jour)}</span>
                           <span className="tr-sugg-cout">{s.coutSupplementaire <= 0 ? "Sur la route" : `+${formatMin(s.coutSupplementaire)}`}</span>
                         </div>
                         <div className="tr-sugg-detail">Entre <strong>{s.avant}</strong>{s.apres ? <> et <strong>{s.apres}</strong></> : <> (fin de journée)</>}</div>
-                        <div className="tr-sugg-time"><Clock size={11} style={{ display: "inline", marginRight: 4, verticalAlign: -1 }} />Arrivée à {minToHHMM(s.arrivee)} · {s.duree || 45} min · fin à {minToHHMM(s.fin)}</div>
+                        <div className="tr-sugg-time"><Clock size={11} style={{ display: "inline", marginRight: 4, verticalAlign: -1 }} />Suggestion : arrivée à {minToHHMM(s.arrivee)} · {s.duree || 45} min · fin à {minToHHMM(s.fin)}</div>
 
-                        {suggIdxOuvert === idx && (
-                          <div className="tr-sugg-edit" onClick={(e) => e.stopPropagation()}>
-                            <div style={{ flex: 1, minWidth: 110 }}>
-                              <label className="tr-label">Heure de départ</label>
-                              <input className="tr-input" type="time" value={heureEdit} onChange={(e) => setHeureEdit(e.target.value)} />
-                            </div>
-                            <div style={{ flex: 1, minWidth: 90 }}>
-                              <label className="tr-label">Durée (min)</label>
-                              <input className="tr-input" type="number" min={5} step={5} value={dureeEdit} onChange={(e) => setDureeEdit(Math.max(5, parseInt(e.target.value, 10) || 45))} />
-                            </div>
-                            <button className="tr-btn tr-btn-primary" style={{ flexShrink: 0 }} onClick={() => retenirCreneau(s, heureEdit, dureeEdit)}>
-                              <CheckCircle2 size={14} /> Confirmer
-                            </button>
+                        <div className="tr-sugg-edit">
+                          <div style={{ flex: 1, minWidth: 110 }}>
+                            <label className="tr-label">Heure de départ</label>
+                            <input className="tr-input" type="time" defaultValue={minToHHMMInput(s.arrivee)} ref={(el) => { heureRefs.current[idx] = el; }} />
                           </div>
-                        )}
+                          <div style={{ flex: 1, minWidth: 90 }}>
+                            <label className="tr-label">Durée (min)</label>
+                            <input className="tr-input" type="number" min={5} step={5} defaultValue={s.duree || 45} ref={(el) => { dureeRefs.current[idx] = el; }} />
+                          </div>
+                          <button className="tr-btn tr-btn-primary" style={{ flexShrink: 0 }} onClick={() => retenirCreneau(s, heureRefs.current[idx]?.value, parseInt(dureeRefs.current[idx]?.value, 10))}>
+                            <CheckCircle2 size={14} /> Confirmer
+                          </button>
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -1478,6 +1468,7 @@ function App({ code, onDeconnecter }) {
             setAgendaRdvs={setAgendaRdvs}
             codeSync={code}
             clients={clients}
+            supprimerVisiteTournee={supprimerVisite}
           />
         )}
       </div>
