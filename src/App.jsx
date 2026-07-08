@@ -923,6 +923,46 @@ function App({ code, onDeconnecter }) {
     setRegeoStatut({ fait, total: aGeocoder.length, enCours: false, localises: avant - apres });
   }
 
+  const [ajoutClientEnCours, setAjoutClientEnCours] = useState(false);
+  async function ajouterClientManuel(champs) {
+    setAjoutClientEnCours(true);
+    let coords = null;
+    try {
+      coords = champs.adresse ? await geocoder(`${champs.adresse}, ${champs.cp} ${champs.ville}, France`) : null;
+      if (!coords) coords = await geocoder(`${champs.cp} ${champs.ville}, France`);
+    } catch {}
+    const nouveauClient = {
+      id: "manuel-" + uid(),
+      pression: champs.pression || null,
+      etablissement: champs.etablissement.trim(),
+      nom: null,
+      cp: champs.cp.trim(),
+      ville: champs.ville.trim(),
+      uga: null,
+      derniereVisite: null,
+      prochainRdv: null,
+      statutRdv: null,
+      groupement: null,
+      contact: champs.contact?.trim() || null,
+      adresse: champs.adresse?.trim() || null,
+      email: champs.email?.trim() || null,
+      tel1: champs.tel1?.trim() || null,
+      tel2: null,
+      nbVisites: 0,
+      ciblage: champs.ciblage || null,
+      coords,
+      dureeDefaut: 45,
+    };
+    setClients(prev => [...prev, nouveauClient]);
+    await forcerSyncMaintenant();
+    setAjoutClientEnCours(false);
+    if (!coords) {
+      showToast(`${nouveauClient.etablissement} ajouté, mais non localisé — vérifie le CP/ville`, "error");
+    } else {
+      showToast(`${nouveauClient.etablissement} ajouté à la base ✓`, "ok");
+    }
+  }
+
   function initialiserPlanningDepuisImport(listeClients) {
     setPlanning((prev) => {
       const np = { ...prev };
@@ -1107,7 +1147,8 @@ function App({ code, onDeconnecter }) {
         if (!prev.coords) continue;
         const trajetPrevNew = estimerTrajetMin(prev.coords, client.coords);
         if (trajetPrevNew === null) continue;
-        const arrivee = (prev.fin || 0) + trajetPrevNew;
+        const arriveeBrute = (prev.fin || 0) + trajetPrevNew;
+        const arrivee = Math.ceil(arriveeBrute / 30) * 30; // arrondi à l'heure pile ou à la demi-heure supérieure
         const fin = arrivee + duree;
         let coutSupplementaire;
         if (next && next.coords) {
@@ -1417,6 +1458,9 @@ function App({ code, onDeconnecter }) {
         {vue === "import" && (
           <div className="tr-grid">
             <div className="tr-card">
+              <div className="tr-card-title"><Plus size={14} /> Ajouter un client</div>
+              <FormulaireAjoutClient onAjouter={ajouterClientManuel} enCours={ajoutClientEnCours} />
+              <div style={{ borderTop:"1px dashed var(--gris-clair)", margin:"18px 0" }} />
               <div className="tr-card-title"><Upload size={14} /> Importer la base clients</div>
               <div className="tr-dropzone" onClick={() => fileInputRef.current?.click()}>
                 <Upload size={28} style={{ opacity: 0.4, marginBottom: 10 }} />
@@ -1763,6 +1807,91 @@ function App({ code, onDeconnecter }) {
           {toast.msg}
         </div>
       )}
+    </div>
+  );
+}
+
+// ============================================================
+// Sous-composant : formulaire d'ajout manuel d'un client
+// ============================================================
+function FormulaireAjoutClient({ onAjouter, enCours }) {
+  const [etablissement, setEtablissement] = useState("");
+  const [cp, setCp] = useState("");
+  const [ville, setVille] = useState("");
+  const [adresse, setAdresse] = useState("");
+  const [contact, setContact] = useState("");
+  const [tel1, setTel1] = useState("");
+  const [email, setEmail] = useState("");
+  const [pression, setPression] = useState("Vert");
+  const [ciblage, setCiblage] = useState("SILVER");
+  const [erreur, setErreur] = useState("");
+
+  const CIBLAGE_OPTIONS = ["COMPTE CLE", "PLATINIUM", "GOLD", "SILVER", "BRONZE", "PROSPECTS 1", "PROSPECTS 2", "PROSPECTS 3"];
+
+  async function soumettre() {
+    if (!etablissement.trim() || !cp.trim() || !ville.trim()) {
+      setErreur("Nom, code postal et ville sont obligatoires.");
+      return;
+    }
+    setErreur("");
+    await onAjouter({ etablissement, cp, ville, adresse, contact, tel1, email, pression, ciblage });
+    setEtablissement(""); setCp(""); setVille(""); setAdresse(""); setContact(""); setTel1(""); setEmail("");
+  }
+
+  return (
+    <div>
+      <div className="tr-field">
+        <label className="tr-label">Nom de l'établissement *</label>
+        <input className="tr-input" placeholder="Ex: Pharmacie du Centre" value={etablissement} onChange={e => setEtablissement(e.target.value)} />
+      </div>
+      <div style={{ display:"flex", gap:8 }}>
+        <div className="tr-field" style={{ flex:1 }}>
+          <label className="tr-label">Code postal *</label>
+          <input className="tr-input" placeholder="33000" value={cp} onChange={e => setCp(e.target.value)} />
+        </div>
+        <div className="tr-field" style={{ flex:2 }}>
+          <label className="tr-label">Ville *</label>
+          <input className="tr-input" placeholder="Bordeaux" value={ville} onChange={e => setVille(e.target.value)} />
+        </div>
+      </div>
+      <div className="tr-field">
+        <label className="tr-label">Adresse (recommandé, pour une localisation précise)</label>
+        <input className="tr-input" placeholder="12 rue de la Paix" value={adresse} onChange={e => setAdresse(e.target.value)} />
+      </div>
+      <div style={{ display:"flex", gap:8 }}>
+        <div className="tr-field" style={{ flex:1 }}>
+          <label className="tr-label">Pression</label>
+          <select className="tr-select" value={pression} onChange={e => setPression(e.target.value)}>
+            <option value="Rouge">Rouge</option>
+            <option value="Orange">Orange</option>
+            <option value="Vert">Vert</option>
+          </select>
+        </div>
+        <div className="tr-field" style={{ flex:2 }}>
+          <label className="tr-label">Ciblage</label>
+          <select className="tr-select" value={ciblage} onChange={e => setCiblage(e.target.value)}>
+            {CIBLAGE_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+          </select>
+        </div>
+      </div>
+      <div className="tr-field">
+        <label className="tr-label">Contact (optionnel)</label>
+        <input className="tr-input" placeholder="Nom du titulaire" value={contact} onChange={e => setContact(e.target.value)} />
+      </div>
+      <div style={{ display:"flex", gap:8 }}>
+        <div className="tr-field" style={{ flex:1 }}>
+          <label className="tr-label">Téléphone (optionnel)</label>
+          <input className="tr-input" placeholder="06 12 34 56 78" value={tel1} onChange={e => setTel1(e.target.value)} />
+        </div>
+        <div className="tr-field" style={{ flex:1 }}>
+          <label className="tr-label">Email (optionnel)</label>
+          <input className="tr-input" placeholder="contact@pharmacie.fr" value={email} onChange={e => setEmail(e.target.value)} />
+        </div>
+      </div>
+      {erreur && <div style={{ color:"#8A3530", background:"#FCEEED", borderRadius:7, padding:"8px 12px", marginBottom:12, fontSize:13 }}>{erreur}</div>}
+      <button className="tr-btn tr-btn-primary tr-btn-full" onClick={soumettre} disabled={enCours}>
+        <Plus size={14} /> {enCours ? "Ajout et localisation..." : "Ajouter ce client"}
+      </button>
     </div>
   );
 }
