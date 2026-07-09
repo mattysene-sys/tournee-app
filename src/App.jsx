@@ -141,6 +141,16 @@ function scoreClient(client) {
   return p * 10 + c;
 }
 
+// Renvoie { date, heure } du prochain RDV d'un client, en allant chercher
+// l'heure dans planning[dateKey] (la date seule est stockée sur le client).
+function getProchainRdvInfo(client, planning) {
+  if (!client?.prochainRdv) return null;
+  const dateKey = client.prochainRdv;
+  const entree = (planning?.[dateKey] || []).find((r) => r.clientId === client.id);
+  const heure = entree && entree.heureArrivee != null ? minToHHMM(entree.heureArrivee) : null;
+  return { date: dateKey, dateAff: formatDateCourt(dateKey), heure };
+}
+
 function joursOuvres(depuis, nbJours) {
   const out = [];
   let d = new Date(depuis);
@@ -554,10 +564,64 @@ function creneauxSeChevauchent(debutA, finA, debutB, finB) {
   return hhmmToMin(debutA) < hhmmToMin(finB) && hhmmToMin(debutB) < hhmmToMin(finA);
 }
 
+// --- Aide-mémoire client : export du RDV confirmé vers son propre agenda ---
+function pad2(n) { return String(n).padStart(2, "0"); }
+
+function icsEscape(s) {
+  return (s || "").replace(/([,;])/g, "\\$1").replace(/\n/g, "\\n");
+}
+
+function construireICS({ titre, description, lieu, dateISO, debut, fin }) {
+  const dtStart = dateISO.replace(/-/g, "") + "T" + debut.replace(":", "") + "00";
+  const dtEnd = dateISO.replace(/-/g, "") + "T" + fin.replace(":", "") + "00";
+  const now = new Date();
+  const dtStamp = `${now.getUTCFullYear()}${pad2(now.getUTCMonth() + 1)}${pad2(now.getUTCDate())}T${pad2(now.getUTCHours())}${pad2(now.getUTCMinutes())}${pad2(now.getUTCSeconds())}Z`;
+  return [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "PRODID:-//Tournee//RDV//FR",
+    "BEGIN:VEVENT",
+    `UID:${Date.now()}-rdv@tournee-app`,
+    `DTSTAMP:${dtStamp}`,
+    `DTSTART:${dtStart}`,
+    `DTEND:${dtEnd}`,
+    `SUMMARY:${icsEscape(titre)}`,
+    lieu ? `LOCATION:${icsEscape(lieu)}` : null,
+    description ? `DESCRIPTION:${icsEscape(description)}` : null,
+    "END:VEVENT",
+    "END:VCALENDAR",
+  ].filter(Boolean).join("\r\n");
+}
+
+function telechargerICS(contenu, nomFichier) {
+  const blob = new Blob([contenu], { type: "text/calendar;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = nomFichier;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function lienGoogleCalendar({ titre, lieu, dateISO, debut, fin }) {
+  const dtStart = dateISO.replace(/-/g, "") + "T" + debut.replace(":", "") + "00";
+  const dtEnd = dateISO.replace(/-/g, "") + "T" + fin.replace(":", "") + "00";
+  const params = new URLSearchParams({
+    action: "TEMPLATE",
+    text: titre,
+    dates: `${dtStart}/${dtEnd}`,
+    location: lieu || "",
+  });
+  return `https://www.google.com/calendar/render?${params.toString()}`;
+}
+
 function PageReservation({ id }) {
   const [proposition, setProposition] = useState(undefined); // undefined = chargement, null = introuvable
   const [creneauxEtat, setCreneauxEtat] = useState([]); // [{...creneau, disponible}]
   const [confirme, setConfirme] = useState(null); // creneau confirmé, ou null
+  const [clientInfo, setClientInfo] = useState(null); // { etablissement, adresse, ville } pour l'agenda
   const [enCours, setEnCours] = useState(false);
   const [message, setMessage] = useState("");
 
@@ -568,6 +632,11 @@ function PageReservation({ id }) {
       setProposition(prop);
       if ((prop.statut === "confirme" || prop.statut === "confirme_vu") && prop.choix) {
         setConfirme(prop.choix);
+        try {
+          const donnees = await chargerDonneesDistantes(prop.code);
+          const c = (donnees?.clients || []).find(cl => cl.id === prop.client_id);
+          if (c) setClientInfo({ etablissement: c.etablissement, adresse: c.adresse, ville: c.ville });
+        } catch {}
         return;
       }
       await rafraichirDisponibilites(prop);
@@ -631,6 +700,8 @@ function PageReservation({ id }) {
     const ok = await sauvegarderDonneesDistantes(proposition.code, next);
     if (ok) {
       await confirmerPropositionRdv(proposition.id, creneau);
+      const c = (next.clients || []).find(cl => cl.id === proposition.client_id);
+      if (c) setClientInfo({ etablissement: c.etablissement, adresse: c.adresse, ville: c.ville });
       setConfirme(creneau);
     } else {
       setMessage("Erreur lors de l'enregistrement. Merci de réessayer.");
@@ -666,6 +737,9 @@ function PageReservation({ id }) {
     );
   }
   if (confirme) {
+    const lieu = clientInfo ? [clientInfo.etablissement, clientInfo.adresse, clientInfo.ville].filter(Boolean).join(", ") : "";
+    const titre = `RDV délégué pharmaceutique${clientInfo?.etablissement ? " — " + clientInfo.etablissement : ""}`;
+    const eventArgs = { titre, description: "Rendez-vous confirmé via Tournée", lieu, dateISO: confirme.jour, debut: confirme.debut, fin: confirme.fin };
     return (
       <div style={S2.root}>
         <div style={S2.card}>
@@ -673,6 +747,22 @@ function PageReservation({ id }) {
           <div style={{ fontSize:14, marginBottom:4 }}>{proposition.client_nom}</div>
           <div style={{ fontSize:15, fontWeight:600, marginTop:10 }}>{formatDateFr(confirme.jour)}</div>
           <div style={{ fontSize:14, color:"#8A93A0" }}>à {confirme.debut.replace(":", "h")}</div>
+          <div style={{ display:"flex", gap:8, marginTop:20, flexWrap:"wrap" }}>
+            <button
+              style={{ ...S2.btn, background:"transparent", border:"1.5px solid #DCD7CB", color:"#1C2630" }}
+              onClick={() => telechargerICS(construireICS(eventArgs), `rdv-${confirme.jour}.ics`)}
+            >
+              📅 Ajouter à mon agenda (.ics)
+            </button>
+            <a
+              href={lienGoogleCalendar(eventArgs)}
+              target="_blank"
+              rel="noreferrer"
+              style={{ ...S2.btn, textDecoration:"none", display:"inline-flex", alignItems:"center", justifyContent:"center" }}
+            >
+              Ajouter à Google Agenda
+            </a>
+          </div>
         </div>
       </div>
     );
@@ -784,7 +874,7 @@ function App({ code, onDeconnecter }) {
       });
       showToast(rows.length === 1
         ? `✅ RDV confirmé : ${messages[0]}`
-        : `✅ ${rows.length} RDV confirmés : ${messages.join(" · ")}`, "ok");
+        : `✅ ${rows.length} RDV confirmés : ${messages.join(" · ")}`, "ok", 8000);
       for (const r of rows) {
         await supabaseFetch(`propositions_rdv?id=eq.${r.id}`, {
           method: "PATCH",
@@ -901,9 +991,9 @@ function App({ code, onDeconnecter }) {
     showToast("Contact enregistré ✓", "ok");
   }
 
-  function showToast(msg, type = "ok") {
+  function showToast(msg, type = "ok", dureeMs = 3000) {
     setToast({ msg, type });
-    setTimeout(() => setToast(null), 3000);
+    setTimeout(() => setToast(null), dureeMs);
   }
 
   async function handleFile(e) {
@@ -1627,17 +1717,23 @@ function App({ code, onDeconnecter }) {
                     <input className="tr-input" placeholder="Rechercher un établissement ou une ville..." value={recherche} onChange={(e) => setRecherche(e.target.value)} />
                   </div>
                   <div className="tr-clients-list">
-                    {clientsFiltres.slice(0, 80).map((c) => (
+                    {clientsFiltres.slice(0, 80).map((c) => {
+                      const prochain = getProchainRdvInfo(c, planning);
+                      return (
                       <div key={c.id} className="tr-client-row" onClick={() => setFicheClient(c)} style={{ cursor: "pointer" }}>
                         <span className="tr-pression-dot" style={{ background: PRESSION_COLOR[c.pression] || "var(--gris)" }}></span>
                         <div className="tr-client-row-main">
                           <div className="tr-client-row-name">{c.etablissement}</div>
-                          <div className="tr-client-row-meta">{c.ville} {c.coords ? "" : "· non localisé"}</div>
+                          <div className="tr-client-row-meta">
+                            {c.ville} {c.coords ? "" : "· non localisé"}
+                            {prochain && <> · <strong>Prochain RDV : {prochain.dateAff}{prochain.heure ? ` à ${prochain.heure}` : ""}</strong></>}
+                          </div>
                         </div>
                         <BadgeContactManquant client={c} onClick={() => setFicheClient(c)} />
                         {c.ciblage && <span className={`tr-badge ${CIBLAGE_PREMIUM.includes(c.ciblage) ? "tr-badge-gold" : "tr-badge-default"}`}>{c.ciblage}</span>}
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
                   {clientsFiltres.length > 80 && <div style={{ fontSize: 12, color: "var(--gris)", marginTop: 8, textAlign: "center" }}>{clientsFiltres.length - 80} autres résultats, affine ta recherche</div>}
                 </>
@@ -1904,6 +2000,7 @@ function App({ code, onDeconnecter }) {
       {ficheClient && (
         <FicheClient
           client={ficheClient}
+          planning={planning}
           onSave={sauvegarderContact}
           onClose={() => setFicheClient(null)}
         />
