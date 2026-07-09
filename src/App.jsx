@@ -1171,6 +1171,19 @@ function App({ code, onDeconnecter }) {
           prevCoords = it.coords;
           return;
         }
+        // Idem si un horaire a déjà été confirmé pour cette visite (par toi ou par le
+        // client via le lien de réservation) : on respecte cet horaire enregistré au
+        // lieu de le recalculer à partir du trajet estimé, sinon l'Agenda / Ma semaine
+        // affiche une heure différente de celle réellement confirmée.
+        const planEntry = (planning[dateKey] || []).find(r => r.clientId === it.client.id);
+        if (planEntry && planEntry.heureArrivee != null) {
+          const arrivee = planEntry.heureArrivee;
+          const fin = planEntry.heureFin != null ? planEntry.heureFin : arrivee + (it.client.dureeDefaut || 45);
+          seq.push({ client: it.client, coords: it.coords, heureArrivee: arrivee, fin });
+          curMin = fin;
+          prevCoords = it.coords;
+          return;
+        }
         const trajet = prevCoords ? estimerTrajetMin(prevCoords, it.coords) || 0 : 0;
         curMin += trajet;
         const arrivee = curMin;
