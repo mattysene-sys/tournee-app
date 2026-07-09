@@ -1044,6 +1044,18 @@ function App({ code, onDeconnecter }) {
       let prevCoords = depart.coords;
       const seq = [];
       items.forEach((it) => {
+        // Si cette visite a été repositionnée manuellement dans l'Agenda (glisser-déposer),
+        // on respecte cet horaire fixé plutôt que de le recalculer — sinon les suggestions
+        // suivantes ignorent le vrai horaire et peuvent proposer un créneau déjà occupé.
+        const override = (donnees.agendaRdvs || []).find(r => r.overrideTournee === it.client.id && r.jour === dateKey);
+        if (override) {
+          const arrivee = hhmmToMin(override.debut);
+          const fin = hhmmToMin(override.fin);
+          seq.push({ client: it.client, coords: it.coords, heureArrivee: arrivee, fin });
+          curMin = fin;
+          prevCoords = it.coords;
+          return;
+        }
         const trajet = prevCoords ? estimerTrajetMin(prevCoords, it.coords) || 0 : 0;
         curMin += trajet;
         const arrivee = curMin;
