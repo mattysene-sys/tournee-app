@@ -5,6 +5,10 @@ import AgendaView from "./AgendaView";
 import AssistantVocal from "./components/AssistantVocal";
 import FicheClient, { BadgeContactManquant } from "./components/FicheClient";
 import BoutonAgenda from "./components/BoutonAgenda";
+import {
+  CIBLAGE_SCORE, CIBLAGE_OPTIONS, CIBLAGE_ELIGIBLE_SUGGESTIONS,
+  CIBLAGE_OK, CIBLAGE_PREMIUM, PRESSION_SCORE, PRESSION_COLOR,
+} from "./settings/segmentation";
 
 // ============================================================
 // Constantes
@@ -14,28 +18,12 @@ const COEF_ROUTE = 1.3;
 const JOURNEE_DEBUT = 9 * 60;
 const JOURNEE_FIN = 17 * 60 + 30;
 
-const PRESSION_SCORE = { Rouge: 3, Orange: 2, Vert: 1 };
-
 const MODELE_EMAIL_DEFAUT = {
   sujetVous: "Proposition de rendez-vous — {etablissement}",
   corpsVous: "Bonjour{prenom},\n\nJe vous propose les créneaux suivants pour notre prochain rendez-vous à {etablissement} :\n\n{creneaux}\n\nMerci de choisir celui qui vous convient via ce lien :\n{lien}\n\nCordialement",
   sujetTu: "Proposition de rendez-vous — {etablissement}",
   corpsTu: "Salut{prenom},\n\nJe te propose les créneaux suivants pour notre prochain rendez-vous à {etablissement} :\n\n{creneaux}\n\nMerci de choisir celui qui te convient via ce lien :\n{lien}\n\nÀ bientôt",
 };
-
-const CIBLAGE_SCORE = {
-  "COMPTE CLE": 8,
-  PLATINIUM: 7,
-  GOLD: 6,
-  SILVER: 5,
-  BRONZE: 4,
-  "PROSPECTS 1": 3,
-  "PROSPECTS 2": 2,
-  "PROSPECTS 3": 1,
-};
-
-const PRESSION_COLOR = { Rouge: "var(--rouge)", Orange: "var(--orange)", Vert: "var(--vert)" };
-const CIBLAGE_ELIGIBLE_SUGGESTIONS = ["COMPTE CLE", "PLATINIUM", "GOLD", "SILVER", "BRONZE", "PROSPECTS 1"];
 
 // ============================================================
 // Utilitaires géo & temps
@@ -1647,7 +1635,7 @@ function App({ code, onDeconnecter }) {
                           <div className="tr-client-row-meta">{c.ville} {c.coords ? "" : "· non localisé"}</div>
                         </div>
                         <BadgeContactManquant client={c} onClick={() => setFicheClient(c)} />
-                        {c.ciblage && <span className={`tr-badge ${["GOLD", "PLATINIUM", "COMPTE CLE"].includes(c.ciblage) ? "tr-badge-gold" : "tr-badge-default"}`}>{c.ciblage}</span>}
+                        {c.ciblage && <span className={`tr-badge ${CIBLAGE_PREMIUM.includes(c.ciblage) ? "tr-badge-gold" : "tr-badge-default"}`}>{c.ciblage}</span>}
                       </div>
                     ))}
                   </div>
@@ -1747,7 +1735,7 @@ function App({ code, onDeconnecter }) {
                       <div className="tr-client-row-meta">{c.ville} {c.derniereVisite ? `· vu le ${formatDateCourt(c.derniereVisite)}` : "· jamais vu"}</div>
                     </div>
                     <BadgeContactManquant client={c} onClick={(e) => { e.stopPropagation(); setFicheClient(c); }} />
-                    {c.ciblage && <span className={`tr-badge ${["GOLD", "PLATINIUM", "COMPTE CLE"].includes(c.ciblage) ? "tr-badge-gold" : "tr-badge-default"}`}>{c.ciblage}</span>}
+                    {c.ciblage && <span className={`tr-badge ${CIBLAGE_PREMIUM.includes(c.ciblage) ? "tr-badge-gold" : "tr-badge-default"}`}>{c.ciblage}</span>}
                   </div>
                 ))}
               </div>
@@ -1905,7 +1893,7 @@ function App({ code, onDeconnecter }) {
                   <div style={{ fontWeight: 600, fontSize: 13.5 }}>{res.client.etablissement}</div>
                   <div style={{ fontSize: 11.5, color: "var(--gris)" }}>{res.client.ville} · {formatMin(res.trajet)} de trajet{res.client.derniereVisite ? ` · vu le ${formatDateCourt(res.client.derniereVisite)}` : " · jamais vu"}</div>
                 </div>
-                {res.client.ciblage && <span className={`tr-badge ${["GOLD", "PLATINIUM", "COMPTE CLE"].includes(res.client.ciblage) ? "tr-badge-gold" : "tr-badge-default"}`}>{res.client.ciblage}</span>}
+                {res.client.ciblage && <span className={`tr-badge ${CIBLAGE_PREMIUM.includes(res.client.ciblage) ? "tr-badge-gold" : "tr-badge-default"}`}>{res.client.ciblage}</span>}
                 {res.client.tel1 && <a href={`tel:${res.client.tel1}`} className="tr-btn tr-btn-outline tr-btn-sm" style={{ flexShrink: 0 }}><Phone size={12} /></a>}
               </div>
             ))}
@@ -1994,10 +1982,8 @@ function FormulaireAjoutClient({ onAjouter, enCours }) {
   const [tel1, setTel1] = useState("");
   const [email, setEmail] = useState("");
   const [pression, setPression] = useState("Vert");
-  const [ciblage, setCiblage] = useState("SILVER");
+  const [ciblage, setCiblage] = useState(CIBLAGE_OPTIONS[Math.floor(CIBLAGE_OPTIONS.length / 2)] || "");
   const [erreur, setErreur] = useState("");
-
-  const CIBLAGE_OPTIONS = ["COMPTE CLE", "PLATINIUM", "GOLD", "SILVER", "BRONZE", "PROSPECTS 1", "PROSPECTS 2", "PROSPECTS 3"];
 
   async function soumettre() {
     if (!etablissement.trim() || !cp.trim() || !ville.trim()) {
@@ -2092,8 +2078,6 @@ function SemaineView({ departs, definirDepartJour, rdvParJourCalcule, joursTries
   const joursAffiches = Array.from(new Set([...joursTries, ...Object.keys(departs), ...joursAgenda]))
     .filter(d => d >= aujourdHui && !estBloque(d))
     .sort();
-
-  const CIBLAGE_OK = ["COMPTE CLE", "PLATINIUM", "GOLD", "SILVER", "BRONZE", "PROSPECTS 1"];
 
   function getSuggestions(dateKey) {
     const seq = rdvParJourCalcule[dateKey] || [];
