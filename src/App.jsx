@@ -98,6 +98,40 @@ function dateToKey(d) {
   return d.toISOString().slice(0, 10);
 }
 
+// Calcule Pâques (algorithme de Meeus/Jones/Butcher) puis en déduit les jours fériés mobiles
+function joursFeriesFrancais(annee) {
+  const a = annee % 19, b = Math.floor(annee / 100), c = annee % 100;
+  const d = Math.floor(b / 4), e = b % 4, f = Math.floor((b + 8) / 25);
+  const g = Math.floor((b - f + 1) / 3), h = (19 * a + b - d - g + 15) % 30;
+  const i = Math.floor(c / 4), k = c % 4;
+  const l = (32 + 2 * e + 2 * i - h - k) % 7;
+  const m = Math.floor((a + 11 * h + 22 * l) / 451);
+  const mois = Math.floor((h + l - 7 * m + 114) / 31);
+  const jour = ((h + l - 7 * m + 114) % 31) + 1;
+  const paques = new Date(annee, mois - 1, jour);
+  function plusJours(date, n) { const d2 = new Date(date); d2.setDate(d2.getDate() + n); return d2; }
+  const feries = [
+    new Date(annee, 0, 1),   // Jour de l'an
+    plusJours(paques, 1),    // Lundi de Pâques
+    new Date(annee, 4, 1),   // Fête du travail
+    new Date(annee, 4, 8),   // Victoire 1945
+    plusJours(paques, 39),   // Ascension
+    plusJours(paques, 50),   // Lundi de Pentecôte
+    new Date(annee, 6, 14),  // Fête nationale
+    new Date(annee, 7, 15),  // Assomption
+    new Date(annee, 10, 1),  // Toussaint
+    new Date(annee, 10, 11), // Armistice
+    new Date(annee, 11, 25), // Noël
+  ];
+  return new Set(feries.map(d2 => dateToKey(d2)));
+}
+const _CACHE_FERIES = {};
+function estJourFerieFR(dateKey) {
+  const annee = parseInt(dateKey.slice(0, 4), 10);
+  if (!_CACHE_FERIES[annee]) _CACHE_FERIES[annee] = joursFeriesFrancais(annee);
+  return _CACHE_FERIES[annee].has(dateKey);
+}
+
 function formatDateFr(dateKey) {
   if (!dateKey) return "—";
   const d = new Date(dateKey + "T00:00:00");
@@ -1090,7 +1124,7 @@ function App({ code, onDeconnecter }) {
 
     function estJourOuvre(dateKey) {
       const j = new Date(dateKey + "T00:00:00").getDay();
-      return j >= 1 && j <= 5;
+      return j >= 1 && j <= 5 && !estJourFerieFR(dateKey) && dateKey >= dateToKey(aujourdHuiDate);
     }
 
     function ajouterFenetreJoursOuvres(joursAvecDepart, debut, fin) {
