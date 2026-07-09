@@ -1,8 +1,7 @@
 // src/components/FicheClient.jsx
 import React, { useState } from "react";
 import { Phone, Mail, X, Save, User, AlertCircle, CheckCircle2 } from "lucide-react";
-
-const PRESSION_COLOR = { Rouge: "#C75450", Orange: "#E8714A", Vert: "#5B8C6E" };
+import { PRESSION_COLOR_HEX as PRESSION_COLOR } from "../settings/segmentation";
 
 const lbl = {
   display: "block", fontSize: 11, textTransform: "uppercase",
