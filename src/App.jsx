@@ -95,7 +95,10 @@ function hhmmToMin(hhmm) {
 }
 
 function dateToKey(d) {
-  return d.toISOString().slice(0, 10);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const j = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${j}`;
 }
 
 // Calcule Pâques (algorithme de Meeus/Jones/Butcher) puis en déduit les jours fériés mobiles
