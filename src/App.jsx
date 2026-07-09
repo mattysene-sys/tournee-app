@@ -15,6 +15,14 @@ const JOURNEE_DEBUT = 9 * 60;
 const JOURNEE_FIN = 17 * 60 + 30;
 
 const PRESSION_SCORE = { Rouge: 3, Orange: 2, Vert: 1 };
+
+const MODELE_EMAIL_DEFAUT = {
+  sujetVous: "Proposition de rendez-vous — {etablissement}",
+  corpsVous: "Bonjour{prenom},\n\nJe vous propose les créneaux suivants pour notre prochain rendez-vous à {etablissement} :\n\n{creneaux}\n\nMerci de choisir celui qui vous convient via ce lien :\n{lien}\n\nCordialement",
+  sujetTu: "Proposition de rendez-vous — {etablissement}",
+  corpsTu: "Salut{prenom},\n\nJe te propose les créneaux suivants pour notre prochain rendez-vous à {etablissement} :\n\n{creneaux}\n\nMerci de choisir celui qui te convient via ce lien :\n{lien}\n\nÀ bientôt",
+};
+
 const CIBLAGE_SCORE = {
   "COMPTE CLE": 8,
   PLATINIUM: 7,
@@ -229,6 +237,7 @@ function useSyncedState(code, syncTick, setSyncTick) {
     domicile: lireLocal("tournee_domicile", null),
     agendaRdvs: lireLocal("tournee_agendardvs", []),
     periodesBloquees: lireLocal("tournee_periodes", []),
+    preferencesEmail: lireLocal("tournee_prefs_email", { formule: "vous", ...MODELE_EMAIL_DEFAUT }),
   }));
   const donneesRef = useRef(donnees);
   useEffect(() => { donneesRef.current = donnees; }, [donnees]);
@@ -243,6 +252,7 @@ function useSyncedState(code, syncTick, setSyncTick) {
     ecrireLocal("tournee_domicile", next.domicile || null);
     ecrireLocal("tournee_agendardvs", next.agendaRdvs || []);
     ecrireLocal("tournee_periodes", next.periodesBloquees || []);
+    ecrireLocal("tournee_prefs_email", next.preferencesEmail || { formule: "vous", ...MODELE_EMAIL_DEFAUT });
   }, []);
 
   const pousserVersSupabase = useCallback(
@@ -699,13 +709,14 @@ export default function Root() {
 function App({ code, onDeconnecter }) {
   const [syncTick, setSyncTick] = useState({ dernier: null, heure: null });
   const { donnees, update, remplacerTout, setDonneesEtPersist, forcerSyncMaintenant } = useSyncedState(code, syncTick, setSyncTick);
-  const { clients, geoCache, planning, departs, domicile } = donnees;
+  const { clients, geoCache, planning, departs, domicile, preferencesEmail } = donnees;
   const setClients = useCallback((u) => update("clients", u), [update]);
   const setGeoCache = useCallback((u) => update("geoCache", u), [update]);
   const setPlanning = useCallback((u) => update("planning", u), [update]);
   const setDeparts = useCallback((u) => update("departs", u), [update]);
   const setDomicile = useCallback((u) => update("domicile", u), [update]);
   const setAgendaRdvs = useCallback((u) => update("agendaRdvs", u), [update]);
+  const setPreferencesEmail = useCallback((u) => update("preferencesEmail", u), [update]);
 
   const [chargementInitial, setChargementInitial] = useState(true);
 
@@ -801,6 +812,7 @@ function App({ code, onDeconnecter }) {
   const [periodeDebut, setPeriodeDebut] = useState("");
   const [periodeFin, setPeriodeFin] = useState("");
   const [dureeRdv, setDureeRdv] = useState(45);
+  const [showReglagesEmail, setShowReglagesEmail] = useState(false);
   const heureRefs = useRef({});
   const dureeRefs = useRef({});
   const [erreur, setErreur] = useState("");
@@ -1257,10 +1269,22 @@ function App({ code, onDeconnecter }) {
     }
     const lien = `${window.location.origin}${window.location.pathname}?reservation=${proposition.id}`;
     const listeCreneaux = creneaux.map(c => `- ${formatDateFr(c.jour)} à ${c.debut.replace(":","h")}`).join("\n");
-    const sujet = encodeURIComponent(`Proposition de rendez-vous — ${clientSelectionne.etablissement}`);
-    const corps = encodeURIComponent(
-      `Bonjour,\n\nJe vous propose les créneaux suivants pour notre prochain rendez-vous :\n\n${listeCreneaux}\n\nMerci de choisir le créneau qui vous convient via ce lien :\n${lien}\n\nCordialement`
-    );
+    const prefs = { ...MODELE_EMAIL_DEFAUT, ...(preferencesEmail || {}) };
+    const formule = prefs.formule || "vous";
+    const nomContact = clientSelectionne.nom_contact || clientSelectionne.contact || "";
+    const vars = {
+      prenom: nomContact ? ` ${nomContact}` : "",
+      etablissement: clientSelectionne.etablissement,
+      creneaux: listeCreneaux,
+      lien,
+    };
+    function appliquerVariables(texte) {
+      return Object.keys(vars).reduce((acc, cle) => acc.split(`{${cle}}`).join(vars[cle]), texte);
+    }
+    const sujetModele = formule === "tu" ? prefs.sujetTu : prefs.sujetVous;
+    const corpsModele = formule === "tu" ? prefs.corpsTu : prefs.corpsVous;
+    const sujet = encodeURIComponent(appliquerVariables(sujetModele));
+    const corps = encodeURIComponent(appliquerVariables(corpsModele));
     const destinataire = clientSelectionne.email || "";
     window.location.href = `mailto:${destinataire}?subject=${sujet}&body=${corps}`;
     setCreneauxAProposer(new Set());
@@ -1609,6 +1633,14 @@ function App({ code, onDeconnecter }) {
                   placeholder="Durée personnalisée (min)"
                 />
               </div>
+
+              <button className="tr-btn tr-btn-outline tr-btn-full" style={{ marginBottom: 12 }} onClick={() => setShowReglagesEmail(s => !s)}>
+                <Mail size={14}/> {showReglagesEmail ? "Masquer" : "Personnaliser"} le message envoyé au client
+              </button>
+              {showReglagesEmail && (
+                <PanneauReglagesEmail preferencesEmail={preferencesEmail} setPreferencesEmail={setPreferencesEmail} />
+              )}
+
               <div className="tr-search">
                 <Search size={15} />
                 <input className="tr-input" placeholder="Rechercher un établissement ou une ville..." value={recherche} onChange={(e) => setRecherche(e.target.value)} />
@@ -1807,6 +1839,57 @@ function App({ code, onDeconnecter }) {
           {toast.msg}
         </div>
       )}
+    </div>
+  );
+}
+
+// ============================================================
+// Sous-composant : réglages du modèle d'email de proposition
+// ============================================================
+function PanneauReglagesEmail({ preferencesEmail, setPreferencesEmail }) {
+  const prefs = { ...MODELE_EMAIL_DEFAUT, ...(preferencesEmail || {}) };
+  const formule = prefs.formule || "vous";
+
+  function majChamp(cle, valeur) {
+    setPreferencesEmail({ ...prefs, [cle]: valeur });
+  }
+
+  function reinitialiserModele() {
+    if (formule === "tu") {
+      setPreferencesEmail({ ...prefs, sujetTu: MODELE_EMAIL_DEFAUT.sujetTu, corpsTu: MODELE_EMAIL_DEFAUT.corpsTu });
+    } else {
+      setPreferencesEmail({ ...prefs, sujetVous: MODELE_EMAIL_DEFAUT.sujetVous, corpsVous: MODELE_EMAIL_DEFAUT.corpsVous });
+    }
+  }
+
+  const sujetActuel = formule === "tu" ? prefs.sujetTu : prefs.sujetVous;
+  const corpsActuel = formule === "tu" ? prefs.corpsTu : prefs.corpsVous;
+
+  return (
+    <div style={{ background:"#FAFAF8", border:"1.5px solid var(--gris-clair)", borderRadius:10, padding:14, marginBottom:12 }}>
+      <div className="tr-field">
+        <label className="tr-label">Ton du message</label>
+        <div className="tr-mode-row">
+          <button className={`tr-mode-btn ${formule === "vous" ? "active" : ""}`} onClick={() => majChamp("formule", "vous")}>Vouvoiement</button>
+          <button className={`tr-mode-btn ${formule === "tu" ? "active" : ""}`} onClick={() => majChamp("formule", "tu")}>Tutoiement</button>
+        </div>
+      </div>
+      <div className="tr-field">
+        <label className="tr-label">Sujet de l'email</label>
+        <input className="tr-input" value={sujetActuel}
+          onChange={(e) => majChamp(formule === "tu" ? "sujetTu" : "sujetVous", e.target.value)} />
+      </div>
+      <div className="tr-field">
+        <label className="tr-label">Corps du message</label>
+        <textarea className="tr-input" style={{ height:150, resize:"vertical", fontFamily:"inherit" }} value={corpsActuel}
+          onChange={(e) => majChamp(formule === "tu" ? "corpsTu" : "corpsVous", e.target.value)} />
+      </div>
+      <div style={{ fontSize:11.5, color:"var(--gris)", marginBottom:10, lineHeight:1.5 }}>
+        Variables disponibles : <code>{"{prenom}"}</code> (nom du contact si connu), <code>{"{etablissement}"}</code>, <code>{"{creneaux}"}</code> (liste des créneaux proposés), <code>{"{lien}"}</code> (lien de réservation pour le client).
+      </div>
+      <button className="tr-btn tr-btn-outline tr-btn-full" onClick={reinitialiserModele} style={{ fontSize:12 }}>
+        <RefreshCw size={13}/> Réinitialiser ce modèle par défaut
+      </button>
     </div>
   );
 }
