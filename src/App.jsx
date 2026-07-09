@@ -1248,7 +1248,7 @@ function App({ code, onDeconnecter }) {
         const trajetPrevNew = estimerTrajetMin(prev.coords, client.coords);
         if (trajetPrevNew === null) continue;
         const arriveeBrute = (prev.fin || 0) + trajetPrevNew;
-        const arrivee = Math.ceil(arriveeBrute / 30) * 30; // arrondi à l'heure pile ou à la demi-heure supérieure
+        const arrivee = Math.max(JOURNEE_DEBUT, Math.ceil(arriveeBrute / 30) * 30); // arrondi + jamais avant l'ouverture (9h)
         const fin = arrivee + duree;
         let coutSupplementaire;
         if (next && next.coords) {
