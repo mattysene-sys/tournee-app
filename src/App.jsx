@@ -541,7 +541,7 @@ function PageReservation({ id }) {
       const prop = await chargerPropositionRdv(id);
       if (!prop) { setProposition(null); return; }
       setProposition(prop);
-      if (prop.statut === "confirme" && prop.choix) {
+      if ((prop.statut === "confirme" || prop.statut === "confirme_vu") && prop.choix) {
         setConfirme(prop.choix);
         return;
       }
@@ -731,10 +731,49 @@ function App({ code, onDeconnecter }) {
   useEffect(() => {
     const handleVisibility = () => {
       if (document.visibilityState === 'hidden') forcerSyncMaintenant();
+      else verifierConfirmationsRdv();
     };
     document.addEventListener('visibilitychange', handleVisibility);
     return () => document.removeEventListener('visibilitychange', handleVisibility);
   }, [forcerSyncMaintenant]);
+
+  // Vérifier si des clients ont confirmé un créneau proposé par email
+  useEffect(() => {
+    verifierConfirmationsRdv();
+    const onFocus = () => verifierConfirmationsRdv();
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [code]);
+
+  async function verifierConfirmationsRdv() {
+    if (!code) return;
+    try {
+      const res = await supabaseFetch(`propositions_rdv?code=eq.${code}&statut=eq.confirme&select=*`);
+      if (!res.ok) return;
+      const rows = await res.json();
+      if (rows.length === 0) return;
+      const messages = rows.map(r => {
+        const choix = r.choix || {};
+        return `${r.client_nom} → ${formatDateFr(choix.jour)} à ${(choix.debut || "").replace(":", "h")}`;
+      });
+      showToast(rows.length === 1
+        ? `✅ RDV confirmé : ${messages[0]}`
+        : `✅ ${rows.length} RDV confirmés : ${messages.join(" · ")}`, "ok");
+      for (const r of rows) {
+        await supabaseFetch(`propositions_rdv?id=eq.${r.id}`, {
+          method: "PATCH",
+          headers: { Prefer: "return=minimal" },
+          body: JSON.stringify({ statut: "confirme_vu" }),
+        });
+      }
+      // Recharger les données depuis le serveur pour refléter immédiatement le nouveau RDV dans le planning
+      try {
+        const distant = await chargerDonneesDistantes(code);
+        if (distant) setDonneesEtPersist(() => distant);
+      } catch {}
+    } catch {}
+  }
 
   useEffect(() => {
     let annule = false;
