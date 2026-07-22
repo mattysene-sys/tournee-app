@@ -614,7 +614,7 @@ function PanneauExport({ rdvParJourCalcule, agendaRdvs, totalRdvPlanifies, isRea
 }
 
 // ─── Composant principal ──────────────────────────────────────────────────────
-export default function AgendaView({ planning, rdvParJourCalcule, agendaRdvs, setAgendaRdvs, clients = [], supprimerVisiteTournee }) {
+export default function AgendaView({ planning, rdvParJourCalcule, agendaRdvs, setAgendaRdvs, clients = [], supprimerVisiteTournee, departs = {}, domicile = null }) {
   const [semaineOffset, setSemaineOffset] = useState(0);
   const [moisOffset, setMoisOffset]       = useState(0);
   const [vueCalendrier, setVueCalendrier] = useState("semaine"); // "semaine" | "mois"
@@ -681,6 +681,14 @@ export default function AgendaView({ planning, rdvParJourCalcule, agendaRdvs, se
         isTournee: true,
       };
     });
+  }
+
+  // Retourne le point de départ du jour s'il diffère du domicile habituel (= nuit à l'hôtel / ailleurs)
+  function departSpecialPour(dateKey) {
+    const d = departs[dateKey];
+    if (!d || !d.adresse) return null;
+    if (domicile && d.adresse === domicile.adresse) return null;
+    return d;
   }
 
   function tousLesRdv(dateKey) {
@@ -935,9 +943,24 @@ export default function AgendaView({ planning, rdvParJourCalcule, agendaRdvs, se
               const dateKey = dateToKey(jour);
               const rdvs    = tousLesRdv(dateKey);
               const preview = dropPreview?.jour === dateKey ? dropPreview : null;
+              const departSpecial = departSpecialPour(dateKey);
+              const jourSuivantKey = colIdx+1 < jours.length ? dateToKey(jours[colIdx+1]) : null;
+              const departSpecialLendemain = jourSuivantKey ? departSpecialPour(jourSuivantKey) : null;
               return (
                 <div key={colIdx} ref={el => colRefs.current[colIdx] = el}
                   style={{ position:"relative", borderRight:colIdx<4?"1px solid #DCD7CB":"none", height:HAUTEUR_HEURE*(HEURES_FIN-HEURES_DEBUT) }}>
+                  {departSpecial && (
+                    <div title={`Départ ce matin depuis : ${departSpecial.adresse}`}
+                      style={{ position:"absolute", top:2, left:2, right:2, zIndex:6, background:"#FBF0DA", border:"1px solid #C8962E", borderRadius:4, padding:"2px 5px", fontSize:9, color:"#7A5C00", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>
+                      🏨 {departSpecial.adresse}
+                    </div>
+                  )}
+                  {departSpecialLendemain && (
+                    <div title={`Nuit sur place avant demain : ${departSpecialLendemain.adresse}`}
+                      style={{ position:"absolute", bottom:2, left:2, right:2, zIndex:6, background:"#FBF0DA", border:"1px solid #C8962E", borderRadius:4, padding:"2px 5px", fontSize:9, color:"#7A5C00", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>
+                      🏨 Nuit : {departSpecialLendemain.adresse}
+                    </div>
+                  )}
                   {demiHeures.map(dmin=>{
                     const h = Math.floor(dmin/60); const m = dmin%60;
                     const topPx = (dmin - HEURES_DEBUT*60)/60*HAUTEUR_HEURE;
