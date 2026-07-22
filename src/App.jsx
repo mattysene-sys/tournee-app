@@ -1204,17 +1204,13 @@ function App({ code, onDeconnecter }) {
       ajouterFenetreJoursOuvres(joursAvecDepart, debut, fin);
       borneElargissement = fin;
     } else if (mode.type === "suivi") {
-      const base = mode.derniereVisite ? new Date(mode.derniereVisite + "T00:00:00") : new Date(aujourdHuiDate);
-      // Fenêtre : de la moitié de l'intervalle jusqu'à l'intervalle complet
-      // Ex: 6 mois → fenêtre de 3 mois à 6 mois après dernière visite
-      // Ex: 3 mois → fenêtre de 6 semaines à 3 mois après dernière visite
-      // Ex: 1 mois → fenêtre de 2 semaines à 1 mois après dernière visite
-      const debutFenetreDate = new Date(base);
-      debutFenetreDate.setDate(debutFenetreDate.getDate() + Math.floor(mode.jours / 2));
-      if (debutFenetreDate < aujourdHuiDate) debutFenetreDate.setTime(aujourdHuiDate.getTime());
-      const finFenetreDate = new Date(base);
+      // Fenêtre : du lendemain de la requête jusqu'à l'intervalle complet après aujourd'hui
+      // (ex : 6 mois → tout créneau entre demain et dans 6 mois convient, sans urgence particulière —
+      // on privilégie ensuite le trajet le plus logique, pas une date "idéale" précise).
+      const debutFenetreDate = new Date(aujourdHuiDate);
+      debutFenetreDate.setDate(debutFenetreDate.getDate() + 1);
+      const finFenetreDate = new Date(aujourdHuiDate);
       finFenetreDate.setDate(finFenetreDate.getDate() + mode.jours);
-      if (finFenetreDate < aujourdHuiDate) finFenetreDate.setTime(aujourdHuiDate.getTime());
       ajouterFenetreJoursOuvres(joursAvecDepart, debutFenetreDate, finFenetreDate);
       borneElargissement = finFenetreDate;
     }
@@ -1230,15 +1226,6 @@ function App({ code, onDeconnecter }) {
         borneElargissement = nouvelleBorne;
         extensions++;
       }
-    }
-
-    let dateCibleSuivi = null;
-    if (mode.type === "suivi") {
-      const base = mode.derniereVisite ? new Date(mode.derniereVisite + "T00:00:00") : new Date(aujourdHuiDate);
-      const cible = new Date(base);
-      // Trier vers la date cible idéale = intervalle complet (6 mois, 3 mois, 1 mois)
-      cible.setDate(cible.getDate() + mode.jours);
-      dateCibleSuivi = cible < aujourdHuiDate ? new Date(aujourdHuiDate) : cible;
     }
 
     if (joursAvecDepart.length === 0) {
@@ -1309,14 +1296,6 @@ function App({ code, onDeconnecter }) {
     if (mode.type === "urgent") {
       aUtiliser.sort((a, b) => {
         if (a.jour !== b.jour) return a.jour < b.jour ? -1 : 1;
-        return a.coutSupplementaire - b.coutSupplementaire;
-      });
-    } else if (mode.type === "suivi" && dateCibleSuivi) {
-      const cibleTime = dateCibleSuivi.getTime();
-      aUtiliser.sort((a, b) => {
-        const ecartA = Math.abs(new Date(a.jour + "T00:00:00").getTime() - cibleTime);
-        const ecartB = Math.abs(new Date(b.jour + "T00:00:00").getTime() - cibleTime);
-        if (ecartA !== ecartB) return ecartA - ecartB;
         return a.coutSupplementaire - b.coutSupplementaire;
       });
     } else {
