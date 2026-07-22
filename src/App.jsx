@@ -2092,6 +2092,8 @@ function App({ code, onDeconnecter }) {
             codeSync={code}
             clients={clients}
             supprimerVisiteTournee={supprimerVisite}
+            departs={departs}
+            domicile={domicile}
           />
         )}
 
