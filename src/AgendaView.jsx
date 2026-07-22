@@ -674,6 +674,7 @@ export default function AgendaView({ planning, rdvParJourCalcule, agendaRdvs, se
       return {
         id: "t-" + clientId, clientId,
         titre: item.client.etablissement,
+        ville: item.client.ville, uga: item.client.uga,
         type: "tournee", jour: dateKey,
         debut: override ? override.debut : rdvDebutFin(item.heureArrivee, item.fin).debut,
         fin:   override ? override.fin   : rdvDebutFin(item.heureArrivee, item.fin).fin,
@@ -683,10 +684,15 @@ export default function AgendaView({ planning, rdvParJourCalcule, agendaRdvs, se
   }
 
   function tousLesRdv(dateKey) {
+    const clientsById = {};
+    (clients || []).forEach(c => { clientsById[c.id] = c; });
     return [
       ...getRdvTournee(dateKey),
       ...googleEvents.filter(e => e.jour === dateKey),
-      ...(agendaRdvs || []).filter(e => e.jour === dateKey && !e.overrideTournee),
+      ...(agendaRdvs || []).filter(e => e.jour === dateKey && !e.overrideTournee).map(e => {
+        const c = e.clientId ? clientsById[e.clientId] : null;
+        return c ? { ...e, ville: c.ville, uga: c.uga } : e;
+      }),
     ];
   }
 
@@ -967,7 +973,12 @@ export default function AgendaView({ planning, rdvParJourCalcule, agendaRdvs, se
                         <div style={{ fontSize:10.5, fontWeight:600, color:c.text, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>
                           {rdv.titre}{draggable && <span style={{ fontSize:9, opacity:0.5, marginLeft:4 }}>⠿</span>}
                         </div>
-                        {height>28 && <div style={{ fontSize:9.5, color:c.text, opacity:0.8 }}>{minToAff(startMin)} – {minToAff(endMin)}</div>}
+                        {height>28 && (
+                          <div style={{ fontSize:9.5, color:c.text, opacity:0.8 }}>
+                            {minToAff(startMin)} – {minToAff(endMin)}
+                            {rdv.ville ? ` · ${rdv.ville}` : ""}{rdv.uga ? ` (${rdv.uga})` : ""}
+                          </div>
+                        )}
                       </div>
                     );
                   })}
@@ -1012,6 +1023,7 @@ export default function AgendaView({ planning, rdvParJourCalcule, agendaRdvs, se
                       const c = TYPE_COLORS[rdv.type] || TYPE_COLORS.rdv;
                       return (
                         <div key={rdv.id} onClick={(e) => { e.stopPropagation(); if (rdv.type === "google") return; setModalRdv({ rdv, isTournee: rdv.isTournee }); }}
+                          title={rdv.ville ? `${rdv.titre} — ${rdv.ville}${rdv.uga ? ` (${rdv.uga})` : ""}` : rdv.titre}
                           style={{ fontSize:9.5, padding:"1px 4px", borderRadius:3, background:c.bg, borderLeft:`2px solid ${c.border}`, color:c.text, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>
                           {rdv.titre}
                         </div>
