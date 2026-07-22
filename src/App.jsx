@@ -1161,6 +1161,7 @@ function App({ code, onDeconnecter }) {
     }
 
     let joursAvecDepart = [];
+    let borneElargissement = null; // date à partir de laquelle on élargit si trop peu de résultats
     if (mode.type === "date") {
       ajouterDomicileSiAbsent(mode.date);
       joursAvecDepart = Object.keys(departsEtendus).filter((d) => d === mode.date && departsEtendus[d].coords);
@@ -1175,6 +1176,8 @@ function App({ code, onDeconnecter }) {
           d.setDate(lundiCourant.getDate() + i);
           ajouterDomicileSiAbsent(dateToKey(d));
         }
+        borneElargissement = new Date(lundiCourant);
+        borneElargissement.setDate(borneElargissement.getDate() + 4);
       }
       joursAvecDepart = Object.keys(departsEtendus).filter((d) => {
         const jour = new Date(d + "T00:00:00").getDay();
@@ -1185,22 +1188,15 @@ function App({ code, onDeconnecter }) {
       const jourUrgent = debutUrgent.getDay();
       if (jourUrgent === 0) debutUrgent.setDate(debutUrgent.getDate() + 1);
       if (jourUrgent === 6) debutUrgent.setDate(debutUrgent.getDate() + 2);
-      let finFenetre = new Date(debutUrgent);
-      finFenetre.setDate(finFenetre.getDate() + 21);
-      ajouterFenetreJoursOuvres(joursAvecDepart, debutUrgent, finFenetre);
-      // Si les congés/jours fériés laissent trop peu de jours valides, on élargit la recherche
-      let extensionsUrgent = 0;
-      while (joursAvecDepart.filter(dk => estJourOuvre(dk)).length < 5 && extensionsUrgent < 5) {
-        const nouvelleFenetre = new Date(finFenetre);
-        nouvelleFenetre.setDate(nouvelleFenetre.getDate() + 21);
-        ajouterFenetreJoursOuvres(joursAvecDepart, finFenetre, nouvelleFenetre);
-        finFenetre = nouvelleFenetre;
-        extensionsUrgent++;
-      }
+      const finUrgent = new Date(debutUrgent);
+      finUrgent.setDate(finUrgent.getDate() + 21);
+      ajouterFenetreJoursOuvres(joursAvecDepart, debutUrgent, finUrgent);
+      borneElargissement = finUrgent;
     } else if (mode.type === "periode") {
       const debut = new Date(mode.debut + "T00:00:00");
       const fin = new Date(mode.fin + "T00:00:00");
       ajouterFenetreJoursOuvres(joursAvecDepart, debut, fin);
+      borneElargissement = fin;
     } else if (mode.type === "suivi") {
       const base = mode.derniereVisite ? new Date(mode.derniereVisite + "T00:00:00") : new Date(aujourdHuiDate);
       // Fenêtre : de la moitié de l'intervalle jusqu'à l'intervalle complet
@@ -1210,18 +1206,23 @@ function App({ code, onDeconnecter }) {
       const debutFenetreDate = new Date(base);
       debutFenetreDate.setDate(debutFenetreDate.getDate() + Math.floor(mode.jours / 2));
       if (debutFenetreDate < aujourdHuiDate) debutFenetreDate.setTime(aujourdHuiDate.getTime());
-      let finFenetreDate = new Date(base);
+      const finFenetreDate = new Date(base);
       finFenetreDate.setDate(finFenetreDate.getDate() + mode.jours);
       if (finFenetreDate < aujourdHuiDate) finFenetreDate.setTime(aujourdHuiDate.getTime());
       ajouterFenetreJoursOuvres(joursAvecDepart, debutFenetreDate, finFenetreDate);
-      // Si les congés/jours fériés laissent trop peu de jours valides, on élargit la recherche
-      let extensionsSuivi = 0;
-      while (joursAvecDepart.filter(dk => estJourOuvre(dk)).length < 5 && extensionsSuivi < 5) {
-        const nouvelleFinFenetre = new Date(finFenetreDate);
-        nouvelleFinFenetre.setDate(nouvelleFinFenetre.getDate() + 21);
-        ajouterFenetreJoursOuvres(joursAvecDepart, finFenetreDate, nouvelleFinFenetre);
-        finFenetreDate = nouvelleFinFenetre;
-        extensionsSuivi++;
+      borneElargissement = finFenetreDate;
+    }
+
+    // Si les congés/jours fériés/week-ends laissent trop peu de jours valides, on élargit
+    // automatiquement la recherche par blocs de 3 semaines (sauf pour une date précise choisie exprès).
+    if (mode.type !== "date" && borneElargissement) {
+      let extensions = 0;
+      while (joursAvecDepart.filter(dk => estJourOuvre(dk)).length < 7 && extensions < 8) {
+        const nouvelleBorne = new Date(borneElargissement);
+        nouvelleBorne.setDate(nouvelleBorne.getDate() + 21);
+        ajouterFenetreJoursOuvres(joursAvecDepart, borneElargissement, nouvelleBorne);
+        borneElargissement = nouvelleBorne;
+        extensions++;
       }
     }
 
