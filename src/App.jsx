@@ -5,10 +5,6 @@ import AgendaView from "./AgendaView";
 import AssistantVocal from "./components/AssistantVocal";
 import FicheClient, { BadgeContactManquant } from "./components/FicheClient";
 import BoutonAgenda from "./components/BoutonAgenda";
-import {
-  CIBLAGE_SCORE, CIBLAGE_OPTIONS, CIBLAGE_ELIGIBLE_SUGGESTIONS,
-  CIBLAGE_OK, CIBLAGE_PREMIUM, PRESSION_SCORE, PRESSION_COLOR,
-} from "./settings/segmentation";
 
 // ============================================================
 // Constantes
@@ -18,12 +14,28 @@ const COEF_ROUTE = 1.3;
 const JOURNEE_DEBUT = 9 * 60;
 const JOURNEE_FIN = 17 * 60 + 30;
 
+const PRESSION_SCORE = { Rouge: 3, Orange: 2, Vert: 1 };
+
 const MODELE_EMAIL_DEFAUT = {
   sujetVous: "Proposition de rendez-vous — {etablissement}",
   corpsVous: "Bonjour{prenom},\n\nJe vous propose les créneaux suivants pour notre prochain rendez-vous à {etablissement} :\n\n{creneaux}\n\nMerci de choisir celui qui vous convient via ce lien :\n{lien}\n\nCordialement",
   sujetTu: "Proposition de rendez-vous — {etablissement}",
   corpsTu: "Salut{prenom},\n\nJe te propose les créneaux suivants pour notre prochain rendez-vous à {etablissement} :\n\n{creneaux}\n\nMerci de choisir celui qui te convient via ce lien :\n{lien}\n\nÀ bientôt",
 };
+
+const CIBLAGE_SCORE = {
+  "COMPTE CLE": 8,
+  PLATINIUM: 7,
+  GOLD: 6,
+  SILVER: 5,
+  BRONZE: 4,
+  "PROSPECTS 1": 3,
+  "PROSPECTS 2": 2,
+  "PROSPECTS 3": 1,
+};
+
+const PRESSION_COLOR = { Rouge: "var(--rouge)", Orange: "var(--orange)", Vert: "var(--vert)" };
+const CIBLAGE_ELIGIBLE_SUGGESTIONS = ["COMPTE CLE", "PLATINIUM", "GOLD", "SILVER", "BRONZE", "PROSPECTS 1"];
 
 // ============================================================
 // Utilitaires géo & temps
@@ -141,16 +153,6 @@ function scoreClient(client) {
   return p * 10 + c;
 }
 
-// Renvoie { date, heure } du prochain RDV d'un client, en allant chercher
-// l'heure dans planning[dateKey] (la date seule est stockée sur le client).
-function getProchainRdvInfo(client, planning) {
-  if (!client?.prochainRdv) return null;
-  const dateKey = client.prochainRdv;
-  const entree = (planning?.[dateKey] || []).find((r) => r.clientId === client.id);
-  const heure = entree && entree.heureArrivee != null ? minToHHMM(entree.heureArrivee) : null;
-  return { date: dateKey, dateAff: formatDateCourt(dateKey), heure };
-}
-
 function joursOuvres(depuis, nbJours) {
   const out = [];
   let d = new Date(depuis);
@@ -240,6 +242,12 @@ async function confirmerPropositionRdv(id, choix) {
     body: JSON.stringify({ statut: "confirme", choix }),
   });
   return res.ok;
+}
+
+async function chargerToutesPropositions(code) {
+  const res = await supabaseFetch(`propositions_rdv?code=eq.${code}&select=*&order=created_at.desc`);
+  if (!res.ok) return [];
+  return res.json();
 }
 
 // ============================================================
@@ -564,64 +572,10 @@ function creneauxSeChevauchent(debutA, finA, debutB, finB) {
   return hhmmToMin(debutA) < hhmmToMin(finB) && hhmmToMin(debutB) < hhmmToMin(finA);
 }
 
-// --- Aide-mémoire client : export du RDV confirmé vers son propre agenda ---
-function pad2(n) { return String(n).padStart(2, "0"); }
-
-function icsEscape(s) {
-  return (s || "").replace(/([,;])/g, "\\$1").replace(/\n/g, "\\n");
-}
-
-function construireICS({ titre, description, lieu, dateISO, debut, fin }) {
-  const dtStart = dateISO.replace(/-/g, "") + "T" + debut.replace(":", "") + "00";
-  const dtEnd = dateISO.replace(/-/g, "") + "T" + fin.replace(":", "") + "00";
-  const now = new Date();
-  const dtStamp = `${now.getUTCFullYear()}${pad2(now.getUTCMonth() + 1)}${pad2(now.getUTCDate())}T${pad2(now.getUTCHours())}${pad2(now.getUTCMinutes())}${pad2(now.getUTCSeconds())}Z`;
-  return [
-    "BEGIN:VCALENDAR",
-    "VERSION:2.0",
-    "PRODID:-//Tournee//RDV//FR",
-    "BEGIN:VEVENT",
-    `UID:${Date.now()}-rdv@tournee-app`,
-    `DTSTAMP:${dtStamp}`,
-    `DTSTART:${dtStart}`,
-    `DTEND:${dtEnd}`,
-    `SUMMARY:${icsEscape(titre)}`,
-    lieu ? `LOCATION:${icsEscape(lieu)}` : null,
-    description ? `DESCRIPTION:${icsEscape(description)}` : null,
-    "END:VEVENT",
-    "END:VCALENDAR",
-  ].filter(Boolean).join("\r\n");
-}
-
-function telechargerICS(contenu, nomFichier) {
-  const blob = new Blob([contenu], { type: "text/calendar;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = nomFichier;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
-}
-
-function lienGoogleCalendar({ titre, lieu, dateISO, debut, fin }) {
-  const dtStart = dateISO.replace(/-/g, "") + "T" + debut.replace(":", "") + "00";
-  const dtEnd = dateISO.replace(/-/g, "") + "T" + fin.replace(":", "") + "00";
-  const params = new URLSearchParams({
-    action: "TEMPLATE",
-    text: titre,
-    dates: `${dtStart}/${dtEnd}`,
-    location: lieu || "",
-  });
-  return `https://www.google.com/calendar/render?${params.toString()}`;
-}
-
 function PageReservation({ id }) {
   const [proposition, setProposition] = useState(undefined); // undefined = chargement, null = introuvable
   const [creneauxEtat, setCreneauxEtat] = useState([]); // [{...creneau, disponible}]
   const [confirme, setConfirme] = useState(null); // creneau confirmé, ou null
-  const [clientInfo, setClientInfo] = useState(null); // { etablissement, adresse, ville } pour l'agenda
   const [enCours, setEnCours] = useState(false);
   const [message, setMessage] = useState("");
 
@@ -632,11 +586,6 @@ function PageReservation({ id }) {
       setProposition(prop);
       if ((prop.statut === "confirme" || prop.statut === "confirme_vu") && prop.choix) {
         setConfirme(prop.choix);
-        try {
-          const donnees = await chargerDonneesDistantes(prop.code);
-          const c = (donnees?.clients || []).find(cl => cl.id === prop.client_id);
-          if (c) setClientInfo({ etablissement: c.etablissement, adresse: c.adresse, ville: c.ville });
-        } catch {}
         return;
       }
       await rafraichirDisponibilites(prop);
@@ -700,8 +649,6 @@ function PageReservation({ id }) {
     const ok = await sauvegarderDonneesDistantes(proposition.code, next);
     if (ok) {
       await confirmerPropositionRdv(proposition.id, creneau);
-      const c = (next.clients || []).find(cl => cl.id === proposition.client_id);
-      if (c) setClientInfo({ etablissement: c.etablissement, adresse: c.adresse, ville: c.ville });
       setConfirme(creneau);
     } else {
       setMessage("Erreur lors de l'enregistrement. Merci de réessayer.");
@@ -737,9 +684,6 @@ function PageReservation({ id }) {
     );
   }
   if (confirme) {
-    const lieu = clientInfo ? [clientInfo.etablissement, clientInfo.adresse, clientInfo.ville].filter(Boolean).join(", ") : "";
-    const titre = `RDV délégué pharmaceutique${clientInfo?.etablissement ? " — " + clientInfo.etablissement : ""}`;
-    const eventArgs = { titre, description: "Rendez-vous confirmé via Tournée", lieu, dateISO: confirme.jour, debut: confirme.debut, fin: confirme.fin };
     return (
       <div style={S2.root}>
         <div style={S2.card}>
@@ -747,22 +691,6 @@ function PageReservation({ id }) {
           <div style={{ fontSize:14, marginBottom:4 }}>{proposition.client_nom}</div>
           <div style={{ fontSize:15, fontWeight:600, marginTop:10 }}>{formatDateFr(confirme.jour)}</div>
           <div style={{ fontSize:14, color:"#8A93A0" }}>à {confirme.debut.replace(":", "h")}</div>
-          <div style={{ display:"flex", gap:8, marginTop:20, flexWrap:"wrap" }}>
-            <button
-              style={{ ...S2.btn, background:"transparent", border:"1.5px solid #DCD7CB", color:"#1C2630" }}
-              onClick={() => telechargerICS(construireICS(eventArgs), `rdv-${confirme.jour}.ics`)}
-            >
-              📅 Ajouter à mon agenda (.ics)
-            </button>
-            <a
-              href={lienGoogleCalendar(eventArgs)}
-              target="_blank"
-              rel="noreferrer"
-              style={{ ...S2.btn, textDecoration:"none", display:"inline-flex", alignItems:"center", justifyContent:"center" }}
-            >
-              Ajouter à Google Agenda
-            </a>
-          </div>
         </div>
       </div>
     );
@@ -874,7 +802,7 @@ function App({ code, onDeconnecter }) {
       });
       showToast(rows.length === 1
         ? `✅ RDV confirmé : ${messages[0]}`
-        : `✅ ${rows.length} RDV confirmés : ${messages.join(" · ")}`, "ok", 8000);
+        : `✅ ${rows.length} RDV confirmés : ${messages.join(" · ")}`, "ok");
       for (const r of rows) {
         await supabaseFetch(`propositions_rdv?id=eq.${r.id}`, {
           method: "PATCH",
@@ -991,9 +919,9 @@ function App({ code, onDeconnecter }) {
     showToast("Contact enregistré ✓", "ok");
   }
 
-  function showToast(msg, type = "ok", dureeMs = 3000) {
+  function showToast(msg, type = "ok") {
     setToast({ msg, type });
-    setTimeout(() => setToast(null), dureeMs);
+    setTimeout(() => setToast(null), 3000);
   }
 
   async function handleFile(e) {
@@ -1166,19 +1094,6 @@ function App({ code, onDeconnecter }) {
         if (override) {
           const arrivee = hhmmToMin(override.debut);
           const fin = hhmmToMin(override.fin);
-          seq.push({ client: it.client, coords: it.coords, heureArrivee: arrivee, fin });
-          curMin = fin;
-          prevCoords = it.coords;
-          return;
-        }
-        // Idem si un horaire a déjà été confirmé pour cette visite (par toi ou par le
-        // client via le lien de réservation) : on respecte cet horaire enregistré au
-        // lieu de le recalculer à partir du trajet estimé, sinon l'Agenda / Ma semaine
-        // affiche une heure différente de celle réellement confirmée.
-        const planEntry = (planning[dateKey] || []).find(r => r.clientId === it.client.id);
-        if (planEntry && planEntry.heureArrivee != null) {
-          const arrivee = planEntry.heureArrivee;
-          const fin = planEntry.heureFin != null ? planEntry.heureFin : arrivee + (it.client.dureeDefaut || 45);
           seq.push({ client: it.client, coords: it.coords, heureArrivee: arrivee, fin });
           curMin = fin;
           prevCoords = it.coords;
@@ -1653,6 +1568,7 @@ function App({ code, onDeconnecter }) {
             <button className={`tr-tab ${vue === "prochain-rdv" ? "active" : ""}`} onClick={() => setVue("prochain-rdv")} disabled={clients.length === 0}>Prochain RDV</button>
             <button className={`tr-tab ${vue === "semaine" ? "active" : ""}`} onClick={() => setVue("semaine")} disabled={clients.length === 0}>Ma semaine</button>
             <button className={`tr-tab ${vue === "agenda" ? "active" : ""}`} onClick={() => setVue("agenda")} disabled={clients.length === 0}>Agenda</button>
+            <button className={`tr-tab ${vue === "reservations" ? "active" : ""}`} onClick={() => setVue("reservations")} disabled={clients.length === 0}>Réservations</button>
             <button className="tr-tab" onClick={onDeconnecter} title="Changer d'espace">⎋</button>
           </div>
         </header>
@@ -1730,23 +1646,17 @@ function App({ code, onDeconnecter }) {
                     <input className="tr-input" placeholder="Rechercher un établissement ou une ville..." value={recherche} onChange={(e) => setRecherche(e.target.value)} />
                   </div>
                   <div className="tr-clients-list">
-                    {clientsFiltres.slice(0, 80).map((c) => {
-                      const prochain = getProchainRdvInfo(c, planning);
-                      return (
+                    {clientsFiltres.slice(0, 80).map((c) => (
                       <div key={c.id} className="tr-client-row" onClick={() => setFicheClient(c)} style={{ cursor: "pointer" }}>
                         <span className="tr-pression-dot" style={{ background: PRESSION_COLOR[c.pression] || "var(--gris)" }}></span>
                         <div className="tr-client-row-main">
                           <div className="tr-client-row-name">{c.etablissement}</div>
-                          <div className="tr-client-row-meta">
-                            {c.ville} {c.coords ? "" : "· non localisé"}
-                            {prochain && <> · <strong>Prochain RDV : {prochain.dateAff}{prochain.heure ? ` à ${prochain.heure}` : ""}</strong></>}
-                          </div>
+                          <div className="tr-client-row-meta">{c.ville} {c.coords ? "" : "· non localisé"}</div>
                         </div>
                         <BadgeContactManquant client={c} onClick={() => setFicheClient(c)} />
-                        {c.ciblage && <span className={`tr-badge ${CIBLAGE_PREMIUM.includes(c.ciblage) ? "tr-badge-gold" : "tr-badge-default"}`}>{c.ciblage}</span>}
+                        {c.ciblage && <span className={`tr-badge ${["GOLD", "PLATINIUM", "COMPTE CLE"].includes(c.ciblage) ? "tr-badge-gold" : "tr-badge-default"}`}>{c.ciblage}</span>}
                       </div>
-                      );
-                    })}
+                    ))}
                   </div>
                   {clientsFiltres.length > 80 && <div style={{ fontSize: 12, color: "var(--gris)", marginTop: 8, textAlign: "center" }}>{clientsFiltres.length - 80} autres résultats, affine ta recherche</div>}
                 </>
@@ -1844,7 +1754,7 @@ function App({ code, onDeconnecter }) {
                       <div className="tr-client-row-meta">{c.ville} {c.derniereVisite ? `· vu le ${formatDateCourt(c.derniereVisite)}` : "· jamais vu"}</div>
                     </div>
                     <BadgeContactManquant client={c} onClick={(e) => { e.stopPropagation(); setFicheClient(c); }} />
-                    {c.ciblage && <span className={`tr-badge ${CIBLAGE_PREMIUM.includes(c.ciblage) ? "tr-badge-gold" : "tr-badge-default"}`}>{c.ciblage}</span>}
+                    {c.ciblage && <span className={`tr-badge ${["GOLD", "PLATINIUM", "COMPTE CLE"].includes(c.ciblage) ? "tr-badge-gold" : "tr-badge-default"}`}>{c.ciblage}</span>}
                   </div>
                 ))}
               </div>
@@ -1980,6 +1890,11 @@ function App({ code, onDeconnecter }) {
             supprimerVisiteTournee={supprimerVisite}
           />
         )}
+
+        {/* VUE : RESERVATIONS EN LIGNE */}
+        {vue === "reservations" && (
+          <VueReservations code={code} />
+        )}
       </div>
 
       {/* MODAL PLAN B */}
@@ -2002,7 +1917,7 @@ function App({ code, onDeconnecter }) {
                   <div style={{ fontWeight: 600, fontSize: 13.5 }}>{res.client.etablissement}</div>
                   <div style={{ fontSize: 11.5, color: "var(--gris)" }}>{res.client.ville} · {formatMin(res.trajet)} de trajet{res.client.derniereVisite ? ` · vu le ${formatDateCourt(res.client.derniereVisite)}` : " · jamais vu"}</div>
                 </div>
-                {res.client.ciblage && <span className={`tr-badge ${CIBLAGE_PREMIUM.includes(res.client.ciblage) ? "tr-badge-gold" : "tr-badge-default"}`}>{res.client.ciblage}</span>}
+                {res.client.ciblage && <span className={`tr-badge ${["GOLD", "PLATINIUM", "COMPTE CLE"].includes(res.client.ciblage) ? "tr-badge-gold" : "tr-badge-default"}`}>{res.client.ciblage}</span>}
                 {res.client.tel1 && <a href={`tel:${res.client.tel1}`} className="tr-btn tr-btn-outline tr-btn-sm" style={{ flexShrink: 0 }}><Phone size={12} /></a>}
               </div>
             ))}
@@ -2013,7 +1928,6 @@ function App({ code, onDeconnecter }) {
       {ficheClient && (
         <FicheClient
           client={ficheClient}
-          planning={planning}
           onSave={sauvegarderContact}
           onClose={() => setFicheClient(null)}
         />
@@ -2092,8 +2006,10 @@ function FormulaireAjoutClient({ onAjouter, enCours }) {
   const [tel1, setTel1] = useState("");
   const [email, setEmail] = useState("");
   const [pression, setPression] = useState("Vert");
-  const [ciblage, setCiblage] = useState(CIBLAGE_OPTIONS[Math.floor(CIBLAGE_OPTIONS.length / 2)] || "");
+  const [ciblage, setCiblage] = useState("SILVER");
   const [erreur, setErreur] = useState("");
+
+  const CIBLAGE_OPTIONS = ["COMPTE CLE", "PLATINIUM", "GOLD", "SILVER", "BRONZE", "PROSPECTS 1", "PROSPECTS 2", "PROSPECTS 3"];
 
   async function soumettre() {
     if (!etablissement.trim() || !cp.trim() || !ville.trim()) {
@@ -2164,6 +2080,80 @@ function FormulaireAjoutClient({ onAjouter, enCours }) {
 }
 
 // ============================================================
+// Sous-composant : vue des réservations prises en ligne par les clients
+// ============================================================
+function VueReservations({ code }) {
+  const [propositions, setPropositions] = useState(null);
+  const [chargement, setChargement] = useState(true);
+  const [filtre, setFiltre] = useState("toutes"); // toutes | en_attente | confirmees
+
+  async function charger() {
+    setChargement(true);
+    const rows = await chargerToutesPropositions(code);
+    setPropositions(rows);
+    setChargement(false);
+  }
+
+  useEffect(() => { charger(); }, [code]);
+
+  const STATUT_BADGE = {
+    en_attente: { label: "En attente de réponse", bg: "#FBF0DA", color: "#7A5C00" },
+    confirme: { label: "Confirmé — nouveau", bg: "#DCEAE0", color: "#27500A" },
+    confirme_vu: { label: "Confirmé", bg: "#DCEAE0", color: "#27500A" },
+  };
+
+  const propositionsFiltrees = (propositions || []).filter(p => {
+    if (filtre === "en_attente") return p.statut === "en_attente";
+    if (filtre === "confirmees") return p.statut === "confirme" || p.statut === "confirme_vu";
+    return true;
+  });
+
+  const nbEnAttente = (propositions || []).filter(p => p.statut === "en_attente").length;
+  const nbConfirmees = (propositions || []).filter(p => p.statut === "confirme" || p.statut === "confirme_vu").length;
+
+  return (
+    <div className="tr-card">
+      <div className="tr-card-title" style={{ justifyContent:"space-between" }}>
+        <span style={{ display:"flex", alignItems:"center", gap:7 }}><Mail size={14}/> Réservations en ligne</span>
+        <button className="tr-btn tr-btn-sm tr-btn-outline" onClick={charger}><RefreshCw size={12}/> Actualiser</button>
+      </div>
+
+      <div className="tr-mode-row" style={{ marginBottom:16 }}>
+        <button className={`tr-mode-btn ${filtre === "toutes" ? "active" : ""}`} onClick={() => setFiltre("toutes")}>Toutes ({(propositions || []).length})</button>
+        <button className={`tr-mode-btn ${filtre === "en_attente" ? "active" : ""}`} onClick={() => setFiltre("en_attente")}>En attente ({nbEnAttente})</button>
+        <button className={`tr-mode-btn ${filtre === "confirmees" ? "active" : ""}`} onClick={() => setFiltre("confirmees")}>Confirmées ({nbConfirmees})</button>
+      </div>
+
+      {chargement && <div className="tr-empty"><RefreshCw size={22} style={{ marginBottom:8, opacity:0.5 }}/><br/>Chargement...</div>}
+      {!chargement && propositionsFiltrees.length === 0 && (
+        <div className="tr-empty">Aucune réservation à afficher ici pour l'instant.</div>
+      )}
+      {!chargement && propositionsFiltrees.map(p => {
+        const badge = STATUT_BADGE[p.statut] || STATUT_BADGE.en_attente;
+        return (
+          <div key={p.id} style={{ border:"1.5px solid var(--gris-clair)", borderRadius:10, padding:14, marginBottom:10 }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:10, marginBottom:8 }}>
+              <div style={{ fontWeight:700, fontSize:14 }}>{p.client_nom}</div>
+              <span className="tr-badge" style={{ background:badge.bg, color:badge.color }}>{badge.label}</span>
+            </div>
+            {(p.statut === "confirme" || p.statut === "confirme_vu") && p.choix ? (
+              <div style={{ fontSize:13, color:"var(--ardoise)" }}>
+                <strong>Créneau choisi :</strong> {formatDateFr(p.choix.jour)} à {(p.choix.debut || "").replace(":", "h")}
+              </div>
+            ) : (
+              <div style={{ fontSize:12.5, color:"var(--gris)" }}>
+                Créneaux proposés : {(p.creneaux || []).map(c => `${formatDateCourt(c.jour)} à ${c.debut.replace(":","h")}`).join(" · ")}
+              </div>
+            )}
+            <div style={{ fontSize:11, color:"var(--gris)", marginTop:6 }}>Proposé le {formatDateCourt(p.created_at?.slice(0,10))}</div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ============================================================
 // Sous-composant : vue Semaine
 // ============================================================
 function SemaineView({ departs, definirDepartJour, rdvParJourCalcule, joursTries, ouvrirPlanB, domicile, definirDomicile, appliquerDomicileAuJour, agendaRdvs, setAgendaRdvs, supprimerVisite, supprimerRdvAgenda, periodesBloquees, setPeriodesBloquees, clients, clientsById, onOuvrirFiche, onChercherCreneau, setVue }) {
@@ -2188,6 +2178,8 @@ function SemaineView({ departs, definirDepartJour, rdvParJourCalcule, joursTries
   const joursAffiches = Array.from(new Set([...joursTries, ...Object.keys(departs), ...joursAgenda]))
     .filter(d => d >= aujourdHui && !estBloque(d))
     .sort();
+
+  const CIBLAGE_OK = ["COMPTE CLE", "PLATINIUM", "GOLD", "SILVER", "BRONZE", "PROSPECTS 1"];
 
   function getSuggestions(dateKey) {
     const seq = rdvParJourCalcule[dateKey] || [];
