@@ -903,6 +903,10 @@ function App({ code, onDeconnecter }) {
   const [periodeDebut, setPeriodeDebut] = useState("");
   const [periodeFin, setPeriodeFin] = useState("");
   const [dureeRdv, setDureeRdv] = useState(45);
+  const [heureMinRdv, setHeureMinRdv] = useState("09:00");
+  const [joursExclus, setJoursExclus] = useState([]); // 1=lundi ... 5=vendredi
+  const [periodeExclueDebut, setPeriodeExclueDebut] = useState("");
+  const [periodeExclueFin, setPeriodeExclueFin] = useState("");
   const [showReglagesEmail, setShowReglagesEmail] = useState(false);
   const heureRefs = useRef({});
   const dureeRefs = useRef({});
@@ -1124,7 +1128,7 @@ function App({ code, onDeconnecter }) {
     return out;
   }
 
-  async function chercherCreneau(client, mode = { type: "semaine" }, dureeVoulue) {
+  async function chercherCreneau(client, mode = { type: "semaine" }, dureeVoulue, heureMinVoulue, joursExclusVoulu, periodeExclueVoulue) {
     setErreur("");
     setSuggestions(null);
     setCreneauRetenu(null);
@@ -1132,6 +1136,7 @@ function App({ code, onDeconnecter }) {
     setConseilDecoucher(null);
     setSuggestionsDecoucher([]);
     const duree = dureeVoulue || client.dureeDefaut || 45;
+    const heureMinMin = heureMinVoulue ? Math.max(JOURNEE_DEBUT, hhmmToMin(heureMinVoulue)) : JOURNEE_DEBUT;
     if (!client.coords) {
       setErreur(`${client.etablissement} n'est pas localisé. Relance le géocodage ou vérifie son adresse.`);
       return;
@@ -1150,6 +1155,21 @@ function App({ code, onDeconnecter }) {
       const j = new Date(dateKey + "T00:00:00").getDay();
       const estBloque = (periodesBloquees || []).some(p => dateKey >= p.debut && dateKey <= p.fin);
       return j >= 1 && j <= 5 && !estJourFerieFR(dateKey) && dateKey >= dateToKey(aujourdHuiDate) && !estBloque;
+    }
+
+    // Combine les règles générales (estJourOuvre) avec les exclusions propres à cette recherche
+    // précise : jours de la semaine à éviter (ex: jamais le lundi) et période à exclure (ex: vacances scolaires du client).
+    function estJourValide(dateKey) {
+      if (!estJourOuvre(dateKey)) return false;
+      if (mode.type === "date") return true; // choix explicite d'une date précise : pas d'exclusion supplémentaire
+      if (joursExclusVoulu && joursExclusVoulu.length) {
+        const jourSemaine = new Date(dateKey + "T00:00:00").getDay();
+        if (joursExclusVoulu.includes(jourSemaine)) return false;
+      }
+      if (periodeExclueVoulue && periodeExclueVoulue.debut && periodeExclueVoulue.fin) {
+        if (dateKey >= periodeExclueVoulue.debut && dateKey <= periodeExclueVoulue.fin) return false;
+      }
+      return true;
     }
 
     function ajouterFenetreJoursOuvres(joursAvecDepart, debut, fin) {
@@ -1228,7 +1248,7 @@ function App({ code, onDeconnecter }) {
     // automatiquement la recherche par blocs de 3 semaines (sauf pour une date précise choisie exprès).
     if (mode.type !== "date" && borneElargissement) {
       let extensions = 0;
-      while (joursAvecDepart.filter(dk => estJourOuvre(dk)).length < 7 && extensions < 8) {
+      while (joursAvecDepart.filter(dk => estJourValide(dk)).length < 7 && extensions < 8) {
         const nouvelleBorne = new Date(borneElargissement);
         nouvelleBorne.setDate(nouvelleBorne.getDate() + 21);
         ajouterFenetreJoursOuvres(joursAvecDepart, borneElargissement, nouvelleBorne);
@@ -1245,7 +1265,7 @@ function App({ code, onDeconnecter }) {
       }
       return;
     }
-    joursAvecDepart = joursAvecDepart.filter(dk => estJourOuvre(dk));
+    joursAvecDepart = joursAvecDepart.filter(dk => estJourValide(dk));
 
     setCalcEnCours(true);
     const rdvParJour = construireRdvParJour(departsEtendus);
@@ -1276,7 +1296,7 @@ function App({ code, onDeconnecter }) {
         const trajetPrevNew = estimerTrajetMin(prev.coords, client.coords);
         if (trajetPrevNew === null) continue;
         const arriveeBrute = (prev.fin || 0) + trajetPrevNew;
-        const arrivee = Math.max(JOURNEE_DEBUT, Math.ceil(arriveeBrute / 30) * 30); // arrondi + jamais avant l'ouverture (9h)
+        const arrivee = Math.max(heureMinMin, Math.ceil(arriveeBrute / 30) * 30); // arrondi + jamais avant l'heure minimum souhaitée
         const fin = arrivee + duree;
         let coutSupplementaire;
         if (next && next.coords) {
@@ -1823,6 +1843,49 @@ function App({ code, onDeconnecter }) {
                 />
               </div>
 
+              <div className="tr-field">
+                <label className="tr-label">Heure minimum souhaitée</label>
+                <div className="tr-mode-row">
+                  <button className={`tr-mode-btn ${heureMinRdv === "09:00" ? "active" : ""}`} onClick={() => setHeureMinRdv("09:00")}>Dès 9h</button>
+                  <button className={`tr-mode-btn ${heureMinRdv === "11:00" ? "active" : ""}`} onClick={() => setHeureMinRdv("11:00")}>Après 11h</button>
+                  <button className={`tr-mode-btn ${heureMinRdv === "14:00" ? "active" : ""}`} onClick={() => setHeureMinRdv("14:00")}>Après 14h</button>
+                </div>
+                <input
+                  className="tr-input"
+                  type="time"
+                  value={heureMinRdv}
+                  onChange={(e) => setHeureMinRdv(e.target.value || "09:00")}
+                  style={{ marginTop: 8 }}
+                />
+                <p style={{ fontSize:11, color:"var(--gris)", marginTop:6, marginBottom:0 }}>Aucun créneau ne sera proposé avant cette heure, même si le trajet le permettrait plus tôt.</p>
+              </div>
+
+              <div className="tr-field">
+                <label className="tr-label">Jours à éviter</label>
+                <div className="tr-mode-row">
+                  {[{v:1,l:"Lun"},{v:2,l:"Mar"},{v:3,l:"Mer"},{v:4,l:"Jeu"},{v:5,l:"Ven"}].map(({v,l}) => (
+                    <button key={v} className={`tr-mode-btn ${joursExclus.includes(v) ? "active" : ""}`}
+                      onClick={() => setJoursExclus(prev => prev.includes(v) ? prev.filter(x => x !== v) : [...prev, v])}>
+                      {l}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="tr-field">
+                <label className="tr-label">Période à exclure (optionnel — ex: vacances scolaires du client)</label>
+                <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+                  <input className="tr-input" type="date" value={periodeExclueDebut} onChange={(e) => setPeriodeExclueDebut(e.target.value)} style={{ flex:1 }} />
+                  <span style={{ color:"var(--gris)", fontSize:12, flexShrink:0 }}>au</span>
+                  <input className="tr-input" type="date" value={periodeExclueFin} min={periodeExclueDebut || undefined} onChange={(e) => setPeriodeExclueFin(e.target.value)} style={{ flex:1 }} />
+                </div>
+                {(periodeExclueDebut || periodeExclueFin) && (
+                  <button className="tr-btn tr-btn-ghost tr-btn-sm" style={{ marginTop:6 }} onClick={() => { setPeriodeExclueDebut(""); setPeriodeExclueFin(""); }}>
+                    <X size={11}/> Effacer la période
+                  </button>
+                )}
+              </div>
+
               <button className="tr-btn tr-btn-outline tr-btn-full" style={{ marginBottom: 12 }} onClick={() => setShowReglagesEmail(s => !s)}>
                 <Mail size={14}/> {showReglagesEmail ? "Masquer" : "Personnaliser"} le message envoyé au client
               </button>
@@ -1840,7 +1903,8 @@ function App({ code, onDeconnecter }) {
                     if (modeRecherche === "date" && !dateChoisie) { setErreur("Choisis d'abord une date."); return; }
                     if (modeRecherche === "periode" && (!periodeDebut || !periodeFin)) { setErreur("Choisis une date de début et de fin."); return; }
                     const mode = modeRecherche === "urgent" ? { type: "urgent" } : modeRecherche === "suivi" ? { type: "suivi", jours: horizonJours, derniereVisite: c.derniereVisite } : modeRecherche === "date" ? { type: "date", date: dateChoisie } : modeRecherche === "periode" ? { type: "periode", debut: periodeDebut, fin: periodeFin } : { type: "semaine" };
-                    chercherCreneau(c, mode, dureeRdv);
+                    const periodeExclueVoulue = (periodeExclueDebut && periodeExclueFin) ? { debut: periodeExclueDebut, fin: periodeExclueFin } : null;
+                    chercherCreneau(c, mode, dureeRdv, heureMinRdv, joursExclus, periodeExclueVoulue);
                   }}>
                     <span className="tr-pression-dot" style={{ background: PRESSION_COLOR[c.pression] || "var(--gris)" }}></span>
                     <div className="tr-client-row-main">
