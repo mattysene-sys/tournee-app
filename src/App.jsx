@@ -1185,9 +1185,18 @@ function App({ code, onDeconnecter }) {
       const jourUrgent = debutUrgent.getDay();
       if (jourUrgent === 0) debutUrgent.setDate(debutUrgent.getDate() + 1);
       if (jourUrgent === 6) debutUrgent.setDate(debutUrgent.getDate() + 2);
-      const fin = new Date(debutUrgent);
-      fin.setDate(fin.getDate() + 21);
-      ajouterFenetreJoursOuvres(joursAvecDepart, debutUrgent, fin);
+      let finFenetre = new Date(debutUrgent);
+      finFenetre.setDate(finFenetre.getDate() + 21);
+      ajouterFenetreJoursOuvres(joursAvecDepart, debutUrgent, finFenetre);
+      // Si les congés/jours fériés laissent trop peu de jours valides, on élargit la recherche
+      let extensionsUrgent = 0;
+      while (joursAvecDepart.filter(dk => estJourOuvre(dk)).length < 5 && extensionsUrgent < 5) {
+        const nouvelleFenetre = new Date(finFenetre);
+        nouvelleFenetre.setDate(nouvelleFenetre.getDate() + 21);
+        ajouterFenetreJoursOuvres(joursAvecDepart, finFenetre, nouvelleFenetre);
+        finFenetre = nouvelleFenetre;
+        extensionsUrgent++;
+      }
     } else if (mode.type === "periode") {
       const debut = new Date(mode.debut + "T00:00:00");
       const fin = new Date(mode.fin + "T00:00:00");
@@ -1201,10 +1210,19 @@ function App({ code, onDeconnecter }) {
       const debutFenetreDate = new Date(base);
       debutFenetreDate.setDate(debutFenetreDate.getDate() + Math.floor(mode.jours / 2));
       if (debutFenetreDate < aujourdHuiDate) debutFenetreDate.setTime(aujourdHuiDate.getTime());
-      const finFenetreDate = new Date(base);
+      let finFenetreDate = new Date(base);
       finFenetreDate.setDate(finFenetreDate.getDate() + mode.jours);
       if (finFenetreDate < aujourdHuiDate) finFenetreDate.setTime(aujourdHuiDate.getTime());
       ajouterFenetreJoursOuvres(joursAvecDepart, debutFenetreDate, finFenetreDate);
+      // Si les congés/jours fériés laissent trop peu de jours valides, on élargit la recherche
+      let extensionsSuivi = 0;
+      while (joursAvecDepart.filter(dk => estJourOuvre(dk)).length < 5 && extensionsSuivi < 5) {
+        const nouvelleFinFenetre = new Date(finFenetreDate);
+        nouvelleFinFenetre.setDate(nouvelleFinFenetre.getDate() + 21);
+        ajouterFenetreJoursOuvres(joursAvecDepart, finFenetreDate, nouvelleFinFenetre);
+        finFenetreDate = nouvelleFinFenetre;
+        extensionsSuivi++;
+      }
     }
 
     let dateCibleSuivi = null;
