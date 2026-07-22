@@ -902,6 +902,10 @@ function App({ code, onDeconnecter }) {
   const [rdvAnnule, setRdvAnnule] = useState(null);
   const [planB, setPlanB] = useState(null);
   const [creneauRetenu, setCreneauRetenu] = useState(null);
+  const [conseilDecoucher, setConseilDecoucher] = useState(null);
+  const [suggestionsDecoucher, setSuggestionsDecoucher] = useState([]);
+  const heureRefsDecoucher = useRef({});
+  const dureeRefsDecoucher = useRef({});
   const [ficheClient, setFicheClient] = useState(null);
   const periodesBloquees = donnees.periodesBloquees || [];
   const setPeriodesBloquees = useCallback((u) => update("periodesBloquees", u), [update]);
@@ -1116,6 +1120,8 @@ function App({ code, onDeconnecter }) {
     setSuggestions(null);
     setCreneauRetenu(null);
     setCreneauxAProposer(new Set());
+    setConseilDecoucher(null);
+    setSuggestionsDecoucher([]);
     const duree = dureeVoulue || client.dureeDefaut || 45;
     if (!client.coords) {
       setErreur(`${client.etablissement} n'est pas localisé. Relance le géocodage ou vérifie son adresse.`);
@@ -1318,18 +1324,86 @@ function App({ code, onDeconnecter }) {
     }
     setCalcEnCours(false);
     if (aUtiliser.length === 0) {
+      setConseilDecoucher(null);
       setErreur(mode.type === "semaine"
         ? "Aucun créneau ne convient sur les jours actuellement planifiés. Vérifie que ton domicile est bien défini dans « Ma semaine »."
         : "Aucun créneau ne convient sur la période choisie.");
       return;
     }
     setClientSelectionne(client);
+    let suggestionsFinales;
     if (mode.type === "urgent" || mode.type === "suivi" || mode.type === "periode") {
       const meilleureParJour = new Map();
       aUtiliser.forEach((s) => { if (!meilleureParJour.has(s.jour)) meilleureParJour.set(s.jour, s); });
-      setSuggestions(Array.from(meilleureParJour.values()).slice(0, 7));
+      suggestionsFinales = Array.from(meilleureParJour.values()).slice(0, 7);
     } else {
-      setSuggestions(aUtiliser.slice(0, 7));
+      suggestionsFinales = aUtiliser.slice(0, 7);
+    }
+    setSuggestions(suggestionsFinales);
+
+    // Si le client est très éloigné du domicile, chercher des visites déjà planifiées
+    // à proximité (n'importe quel autre jour) pour proposer d'y dormir sur place la veille/le
+    // lendemain — bien plus logique en trajet qu'un aller-retour complet depuis le domicile.
+    const distanceDomicile = domicile ? estimerTrajetMin(domicile.coords, client.coords) : null;
+    if (distanceDomicile !== null && distanceDomicile >= 70 && suggestionsFinales.length <= 3) {
+      const seuilProximite = 30; // minutes : proximité jugée suffisante pour dormir sur place
+      const toutesLesVisites = [];
+      Object.keys(rdvParJourCalcule).forEach(jour => {
+        (rdvParJourCalcule[jour] || []).forEach(item => {
+          if (item.client.id === client.id) return;
+          toutesLesVisites.push({ jour, etablissement: item.client.etablissement, coords: item.coords, heureArrivee: item.heureArrivee });
+        });
+      });
+      (donnees.agendaRdvs || []).forEach(r => {
+        if (!r.jour || r.overrideTournee) return;
+        const c = clientsById[r.clientId];
+        if (c && c.coords) toutesLesVisites.push({ jour: r.jour, etablissement: c.etablissement, coords: c.coords, heureArrivee: hhmmToMin(r.debut) });
+      });
+
+      const optionsDecoucher = [];
+      toutesLesVisites.forEach(v => {
+        if (v.jour < dateToKey(aujourdHuiDate)) return;
+        const trajetProximite = estimerTrajetMin(v.coords, client.coords);
+        if (trajetProximite === null || trajetProximite > seuilProximite) return;
+        // Option "lendemain" : nuit sur place après cette visite, client vu tôt le matin suivant
+        const lendemain = new Date(v.jour + "T00:00:00");
+        lendemain.setDate(lendemain.getDate() + 1);
+        const dkLendemain = dateToKey(lendemain);
+        if (estJourOuvre(dkLendemain) && !(planning[dkLendemain] || []).some(r2 => r2.clientId === client.id)) {
+          optionsDecoucher.push({
+            jour: dkLendemain, type: "lendemain", ancrage: v.etablissement, jourAncrage: v.jour,
+            trajetProximite, arrivee: JOURNEE_DEBUT, duree, fin: JOURNEE_DEBUT + duree,
+          });
+        }
+        // Option "veille" : nuit sur place avant cette visite, client vu la veille en fin de journée
+        const veille = new Date(v.jour + "T00:00:00");
+        veille.setDate(veille.getDate() - 1);
+        const dkVeille = dateToKey(veille);
+        if (estJourOuvre(dkVeille) && !(planning[dkVeille] || []).some(r2 => r2.clientId === client.id)) {
+          const arriveeVeille = Math.max(JOURNEE_DEBUT, v.heureArrivee - trajetProximite - duree);
+          optionsDecoucher.push({
+            jour: dkVeille, type: "veille", ancrage: v.etablissement, jourAncrage: v.jour,
+            trajetProximite, arrivee: arriveeVeille, duree, fin: arriveeVeille + duree,
+          });
+        }
+      });
+
+      const parJour = new Map();
+      optionsDecoucher.forEach(o => {
+        const existant = parJour.get(o.jour);
+        if (!existant || o.trajetProximite < existant.trajetProximite) parJour.set(o.jour, o);
+      });
+      const optionsFinales = Array.from(parJour.values())
+        .sort((a, b) => a.trajetProximite - b.trajetProximite || a.jour.localeCompare(b.jour))
+        .slice(0, 5);
+
+      setSuggestionsDecoucher(optionsFinales);
+      setConseilDecoucher(optionsFinales.length === 0
+        ? `${client.etablissement} est assez éloigné de ton domicile (environ ${formatMin(distanceDomicile)} de trajet), et aucune autre visite proche n'est encore planifiée pour envisager de dormir sur place. Envisage d'en programmer une dans le secteur pour optimiser un futur passage.`
+        : null);
+    } else {
+      setSuggestionsDecoucher([]);
+      setConseilDecoucher(null);
     }
   }
 
@@ -1804,6 +1878,52 @@ function App({ code, onDeconnecter }) {
               )}
               {suggestions && clientSelectionne && !calcEnCours && (
                 <div className="tr-card">
+                  {suggestionsDecoucher.length > 0 && (
+                    <div style={{ background:"#FBF0E9", border:"1.5px solid var(--orange)", borderRadius:10, padding:14, marginBottom:16 }}>
+                      <div style={{ display:"flex", gap:8, alignItems:"center", marginBottom:8, fontSize:13, fontWeight:700, color:"#993C1D" }}>
+                        <span>🛏️</span> Option découcher — trajet minimal
+                      </div>
+                      <div style={{ fontSize:12, color:"#993C1D", marginBottom:12, lineHeight:1.5 }}>
+                        {clientSelectionne.etablissement} est loin de ton domicile, mais tu as déjà une visite à proximité ces jours-là. Dormir sur place évite l'aller-retour complet.
+                      </div>
+                      <div className="tr-sugg-list">
+                        {suggestionsDecoucher.map((o, idx) => (
+                          <div key={`decoucher-${o.jour}-${idx}`} className="tr-sugg-card" style={{ paddingLeft:16, borderColor:"var(--orange)" }}>
+                            <div className="tr-sugg-top">
+                              <span className="tr-sugg-jour">{formatDateFr(o.jour)}</span>
+                              <span className="tr-sugg-cout">{formatMin(o.trajetProximite)} de l'ancrage</span>
+                            </div>
+                            <div className="tr-sugg-detail">
+                              {o.type === "lendemain"
+                                ? <>Nuit sur place après ta visite chez <strong>{o.ancrage}</strong> ({formatDateCourt(o.jourAncrage)}), client vu tôt le matin</>
+                                : <>Nuit sur place avant ta visite chez <strong>{o.ancrage}</strong> ({formatDateCourt(o.jourAncrage)}), client vu en fin de journée précédente</>}
+                            </div>
+                            <div className="tr-sugg-time"><Clock size={11} style={{ display:"inline", marginRight:4, verticalAlign:-1 }}/>Suggestion : arrivée à {minToHHMM(o.arrivee)} · {o.duree} min · fin à {minToHHMM(o.fin)}</div>
+                            <div className="tr-sugg-edit">
+                              <div style={{ flex:1, minWidth:110 }}>
+                                <label className="tr-label">Heure de départ</label>
+                                <input className="tr-input" type="time" defaultValue={minToHHMMInput(o.arrivee)} ref={(el) => { heureRefsDecoucher.current[idx] = el; }} />
+                              </div>
+                              <div style={{ flex:1, minWidth:90 }}>
+                                <label className="tr-label">Durée (min)</label>
+                                <input className="tr-input" type="number" min={5} step={5} defaultValue={o.duree} ref={(el) => { dureeRefsDecoucher.current[idx] = el; }} />
+                              </div>
+                              <button className="tr-btn tr-btn-primary" style={{ flexShrink:0 }}
+                                onClick={() => retenirCreneau(o, heureRefsDecoucher.current[idx]?.value, parseInt(dureeRefsDecoucher.current[idx]?.value, 10))}>
+                                <CheckCircle2 size={14}/> Confirmer
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {suggestionsDecoucher.length === 0 && conseilDecoucher && (
+                    <div style={{ background:"#FBF0E9", border:"1.5px solid var(--orange)", borderRadius:8, padding:"12px 14px", marginBottom:14, fontSize:12.5, color:"#993C1D", lineHeight:1.5, display:"flex", gap:9 }}>
+                      <span style={{ flexShrink:0 }}>🛏️</span>
+                      <span>{conseilDecoucher}</span>
+                    </div>
+                  )}
                   <div className="tr-card-title"><Trophy size={14} /> Top {suggestions.length} pour {clientSelectionne.etablissement}</div>
                   <div style={{ fontSize:11.5, color:"var(--gris)", marginBottom:10, lineHeight:1.5 }}>
                     Coche un ou plusieurs créneaux pour les proposer par email au client — il pourra choisir directement celui qui lui convient.
