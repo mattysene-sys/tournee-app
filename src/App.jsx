@@ -244,6 +244,15 @@ async function confirmerPropositionRdv(id, choix) {
   return res.ok;
 }
 
+async function annulerPropositionRdv(id) {
+  const res = await supabaseFetch(`propositions_rdv?id=eq.${id}`, {
+    method: "PATCH",
+    headers: { Prefer: "return=minimal" },
+    body: JSON.stringify({ statut: "annulee" }),
+  });
+  return res.ok;
+}
+
 async function chargerToutesPropositions(code) {
   const res = await supabaseFetch(`propositions_rdv?code=eq.${code}&select=*&order=created_at.desc`);
   if (!res.ok) return [];
@@ -1458,6 +1467,18 @@ function App({ code, onDeconnecter }) {
     showToast("Email préparé — vérifie ta messagerie", "ok");
   }
 
+  async function renvoyerPropositionAutreCreneaux(proposition) {
+    await annulerPropositionRdv(proposition.id);
+    const client = clients.find(c => c.id === proposition.client_id);
+    if (!client) {
+      showToast("Client introuvable dans la base — impossible de relancer la recherche automatiquement", "error");
+      return;
+    }
+    setVue("prochain-rdv");
+    showToast(`Ancienne proposition annulée — recherche de nouveaux créneaux pour ${client.etablissement}`, "ok");
+    setTimeout(() => chercherCreneau(client, { type: "urgent" }), 60);
+  }
+
   function supprimerVisite(dateKey, clientId) {
     setPlanning((p) => {
       const np = { ...p };
@@ -2012,7 +2033,7 @@ function App({ code, onDeconnecter }) {
 
         {/* VUE : RESERVATIONS EN LIGNE */}
         {vue === "reservations" && (
-          <VueReservations code={code} />
+          <VueReservations code={code} clients={clients} onRenvoyer={renvoyerPropositionAutreCreneaux} />
         )}
       </div>
 
@@ -2201,10 +2222,11 @@ function FormulaireAjoutClient({ onAjouter, enCours }) {
 // ============================================================
 // Sous-composant : vue des réservations prises en ligne par les clients
 // ============================================================
-function VueReservations({ code }) {
+function VueReservations({ code, clients, onRenvoyer }) {
   const [propositions, setPropositions] = useState(null);
   const [chargement, setChargement] = useState(true);
   const [filtre, setFiltre] = useState("toutes"); // toutes | en_attente | confirmees
+  const [renvoiEnCoursId, setRenvoiEnCoursId] = useState(null);
 
   async function charger() {
     setChargement(true);
@@ -2219,6 +2241,7 @@ function VueReservations({ code }) {
     en_attente: { label: "En attente de réponse", bg: "#FBF0DA", color: "#7A5C00" },
     confirme: { label: "Confirmé — nouveau", bg: "#DCEAE0", color: "#27500A" },
     confirme_vu: { label: "Confirmé", bg: "#DCEAE0", color: "#27500A" },
+    annulee: { label: "Annulée — remplacée", bg: "#F0EDE7", color: "#8A93A0" },
   };
 
   const propositionsFiltrees = (propositions || []).filter(p => {
@@ -2229,6 +2252,13 @@ function VueReservations({ code }) {
 
   const nbEnAttente = (propositions || []).filter(p => p.statut === "en_attente").length;
   const nbConfirmees = (propositions || []).filter(p => p.statut === "confirme" || p.statut === "confirme_vu").length;
+
+  async function handleRenvoyer(p) {
+    setRenvoiEnCoursId(p.id);
+    await onRenvoyer(p);
+    await charger();
+    setRenvoiEnCoursId(null);
+  }
 
   return (
     <div className="tr-card">
@@ -2265,6 +2295,12 @@ function VueReservations({ code }) {
               </div>
             )}
             <div style={{ fontSize:11, color:"var(--gris)", marginTop:6 }}>Proposé le {formatDateCourt(p.created_at?.slice(0,10))}</div>
+            {p.statut === "en_attente" && (
+              <button className="tr-btn tr-btn-outline tr-btn-sm" style={{ marginTop:10 }}
+                onClick={() => handleRenvoyer(p)} disabled={renvoiEnCoursId === p.id}>
+                <RefreshCw size={12}/> {renvoiEnCoursId === p.id ? "Annulation..." : "Le client a refusé — proposer d'autres créneaux"}
+              </button>
+            )}
           </div>
         );
       })}
