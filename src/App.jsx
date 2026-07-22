@@ -1133,7 +1133,8 @@ function App({ code, onDeconnecter }) {
 
     function estJourOuvre(dateKey) {
       const j = new Date(dateKey + "T00:00:00").getDay();
-      return j >= 1 && j <= 5 && !estJourFerieFR(dateKey) && dateKey >= dateToKey(aujourdHuiDate);
+      const estBloque = (periodesBloquees || []).some(p => dateKey >= p.debut && dateKey <= p.fin);
+      return j >= 1 && j <= 5 && !estJourFerieFR(dateKey) && dateKey >= dateToKey(aujourdHuiDate) && !estBloque;
     }
 
     function ajouterFenetreJoursOuvres(joursAvecDepart, debut, fin) {
