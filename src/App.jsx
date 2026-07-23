@@ -1367,6 +1367,14 @@ function App({ code, onDeconnecter }) {
         const c = clientsById[r.clientId];
         if (c && c.coords) toutesLesVisites.push({ jour: r.jour, etablissement: c.etablissement, coords: c.coords, heureArrivee: hhmmToMin(r.debut) });
       });
+      // Les points de départ spécifiques déjà configurés (ex: hôtel pour une nuitée) comptent aussi
+      // comme ancrages, même si aucun RDV n'y est encore positionné ce jour-là.
+      Object.keys(departs || {}).forEach(jour => {
+        const d = departs[jour];
+        if (!d || !d.coords || !d.adresse) return;
+        if (domicile && d.adresse === domicile.adresse) return; // point habituel, pas une nuitée particulière
+        toutesLesVisites.push({ jour, etablissement: `ton point de départ (${d.adresse})`, coords: d.coords, heureArrivee: hhmmToMin(d.heure || "08:00") });
+      });
 
       const optionsDecoucher = [];
       toutesLesVisites.forEach(v => {
@@ -2396,7 +2404,17 @@ function SemaineView({ departs, definirDepartJour, rdvParJourCalcule, joursTries
     return (periodesBloquees || []).some(p => dateKey >= p.debut && dateKey <= p.fin);
   }
 
-  const joursAffiches = Array.from(new Set([...joursTries, ...Object.keys(departs), ...joursAgenda]))
+  // Ajoute la veille de chaque jour ayant un point de départ particulier (ex: hôtel réservé),
+  // pour pouvoir y proposer des clients proches en fin de journée précédente, même si ce jour-là est vide.
+  const veillesDeparts = Object.keys(departs)
+    .filter(d => departs[d] && (!domicile || departs[d].adresse !== domicile.adresse))
+    .map(d => {
+      const veille = new Date(d + "T00:00:00");
+      veille.setDate(veille.getDate() - 1);
+      return dateToKey(veille);
+    });
+
+  const joursAffiches = Array.from(new Set([...joursTries, ...Object.keys(departs), ...joursAgenda, ...veillesDeparts]))
     .filter(d => d >= aujourdHui && !estBloque(d))
     .sort();
 
@@ -2406,7 +2424,23 @@ function SemaineView({ departs, definirDepartJour, rdvParJourCalcule, joursTries
     const seq = rdvParJourCalcule[dateKey] || [];
     const rdvAgenda = (agendaRdvs || []).filter(r => r.jour === dateKey && !r.overrideTournee);
     const totalRdv = seq.length + rdvAgenda.length;
-    if (totalRdv === 0 || totalRdv >= 5) return [];
+    if (totalRdv >= 5) return [];
+
+    const departJour = departs[dateKey];
+    const departJourSpecial = departJour && (!domicile || departJour.adresse !== domicile.adresse) ? departJour : null;
+
+    // Si le lendemain a un point de départ particulier (ex: hôtel réservé pour une nuitée),
+    // on cherche aussi des clients proches de cet endroit pour terminer la journée dans ce secteur.
+    const lendemainDate = new Date(dateKey + "T00:00:00");
+    lendemainDate.setDate(lendemainDate.getDate() + 1);
+    const lendemainKey = dateToKey(lendemainDate);
+    const departLendemain = departs[lendemainKey];
+    const departLendemainSpecial = departLendemain && (!domicile || departLendemain.adresse !== domicile.adresse) ? departLendemain : null;
+
+    // Sur un jour totalement vide, on ne propose des suggestions que s'il y a un ancrage pertinent
+    // (point de départ précis ce jour-là, ou hôtel programmé le lendemain) — pas juste le domicile,
+    // pour éviter de suggérer sur absolument tous les jours libres.
+    if (totalRdv === 0 && !departJourSpecial && !departLendemainSpecial) return [];
 
     const dejaPlanifies = new Set([
       ...Object.values(rdvParJourCalcule).flat().map(r => r.client.id),
@@ -2414,8 +2448,9 @@ function SemaineView({ departs, definirDepartJour, rdvParJourCalcule, joursTries
     ]);
 
     const pointsRef = [
-      ...(departs[dateKey] ? [departs[dateKey].coords] : domicile ? [domicile.coords] : []),
+      ...(departJour ? [departJour.coords] : domicile ? [domicile.coords] : []),
       ...seq.filter(r => r.coords).map(r => r.coords),
+      ...(departLendemainSpecial ? [departLendemainSpecial.coords] : []),
     ].filter(Boolean);
 
     if (pointsRef.length === 0) return [];
