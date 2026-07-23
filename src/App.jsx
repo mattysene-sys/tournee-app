@@ -58,6 +58,30 @@ function estimerTrajetMin(a, b) {
   return Math.max(3, Math.round(heures * 60));
 }
 
+// Calcul d'itinéraire routier réel (via OSRM, gratuit, sans clé) — utilisé uniquement sur une courte
+// short-list de candidats déjà présélectionnés à vol d'oiseau, pour ne pas multiplier les appels réseau.
+// Se replie automatiquement sur l'estimation à vol d'oiseau si le service est indisponible.
+const _cacheTrajetReel = {};
+async function estimerTrajetMinReel(a, b) {
+  if (!a || !b) return null;
+  const cle = `${a.lat.toFixed(3)},${a.lon.toFixed(3)}|${b.lat.toFixed(3)},${b.lon.toFixed(3)}`;
+  if (_cacheTrajetReel[cle] !== undefined) return _cacheTrajetReel[cle];
+  try {
+    const url = `https://router.project-osrm.org/route/v1/driving/${a.lon},${a.lat};${b.lon},${b.lat}?overview=false`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error("routage indisponible");
+    const data = await res.json();
+    if (!data.routes || !data.routes[0]) throw new Error("aucun itinéraire trouvé");
+    const minutes = Math.max(3, Math.round(data.routes[0].duration / 60));
+    _cacheTrajetReel[cle] = minutes;
+    return minutes;
+  } catch {
+    const repli = estimerTrajetMin(a, b);
+    _cacheTrajetReel[cle] = repli;
+    return repli;
+  }
+}
+
 async function geocoder(query) {
   const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=fr&q=${encodeURIComponent(query)}`;
   const res = await fetch(url, { headers: { Accept: "application/json" } });
@@ -1387,7 +1411,7 @@ function App({ code, onDeconnecter }) {
         const dkLendemain = dateToKey(lendemain);
         if (estJourOuvre(dkLendemain) && !(planning[dkLendemain] || []).some(r2 => r2.clientId === client.id)) {
           optionsDecoucher.push({
-            jour: dkLendemain, type: "lendemain", ancrage: v.etablissement, jourAncrage: v.jour,
+            jour: dkLendemain, type: "lendemain", ancrage: v.etablissement, jourAncrage: v.jour, coordsAncrage: v.coords,
             trajetProximite, arrivee: JOURNEE_DEBUT, duree, fin: JOURNEE_DEBUT + duree,
           });
         }
@@ -1398,7 +1422,7 @@ function App({ code, onDeconnecter }) {
         if (estJourOuvre(dkVeille) && !(planning[dkVeille] || []).some(r2 => r2.clientId === client.id)) {
           const arriveeVeille = Math.max(JOURNEE_DEBUT, v.heureArrivee - trajetProximite - duree);
           optionsDecoucher.push({
-            jour: dkVeille, type: "veille", ancrage: v.etablissement, jourAncrage: v.jour,
+            jour: dkVeille, type: "veille", ancrage: v.etablissement, jourAncrage: v.jour, coordsAncrage: v.coords,
             trajetProximite, arrivee: arriveeVeille, duree, fin: arriveeVeille + duree,
           });
         }
@@ -1409,7 +1433,20 @@ function App({ code, onDeconnecter }) {
         const existant = parJour.get(o.jour);
         if (!existant || o.trajetProximite < existant.trajetProximite) parJour.set(o.jour, o);
       });
-      const optionsFinales = Array.from(parJour.values())
+      // Short-list à vol d'oiseau (élargie) avant l'affinage par vrai itinéraire routier
+      const shortListBrute = Array.from(parJour.values())
+        .sort((a, b) => a.trajetProximite - b.trajetProximite || a.jour.localeCompare(b.jour))
+        .slice(0, 8);
+
+      // Vérification par vrai itinéraire routier (évite les faux positifs à vol d'oiseau,
+      // typiquement en cas d'obstacle géographique comme un estuaire ou une côte).
+      const shortListAffinee = await Promise.all(shortListBrute.map(async o => {
+        const trajetReel = await estimerTrajetMinReel(o.coordsAncrage, client.coords);
+        return { ...o, trajetProximite: trajetReel ?? o.trajetProximite };
+      }));
+
+      const optionsFinales = shortListAffinee
+        .filter(o => o.trajetProximite <= seuilProximite)
         .sort((a, b) => a.trajetProximite - b.trajetProximite || a.jour.localeCompare(b.jour))
         .slice(0, 5);
 
@@ -2396,6 +2433,7 @@ function SemaineView({ departs, definirDepartJour, rdvParJourCalcule, joursTries
   const [periodeDebut, setPeriodeDebut] = useState("");
   const [periodeFin, setPeriodeFin] = useState("");
   const [periodeNom, setPeriodeNom] = useState("");
+  const [hotelSuggConfirmees, setHotelSuggConfirmees] = useState({});
 
   const aujourdHui = dateToKey(new Date());
   const joursAgenda = (agendaRdvs || []).map(r => r.jour).filter(Boolean);
@@ -2487,10 +2525,37 @@ function SemaineView({ departs, definirDepartJour, rdvParJourCalcule, joursTries
         return { client: c, trajet: viaHotel ? meilleurHotel : distNormal, score: CIBLAGE_SCORE[c.ciblage] || 0, viaHotel };
       })
       .filter(x => x.viaHotel ? x.trajet <= 45 : x.trajet <= 20)
-      .filter(x => x.trajet <= 20)
       .sort((a, b) => a.trajet - b.trajet || b.score - a.score)
       .slice(0, 5 - totalRdv);
   }
+
+  // Les suggestions "via hôtel" sont d'abord estimées à vol d'oiseau (ci-dessus, pour un affichage
+  // immédiat), puis vérifiées ici avec un vrai calcul d'itinéraire routier — indispensable en cas
+  // d'obstacle géographique (estuaire, côte...) où la ligne droite sous-estime fortement le trajet réel.
+  useEffect(() => {
+    let annule = false;
+    async function verifier() {
+      const resultats = {};
+      for (const dateKey of joursAffiches) {
+        const brut = getSuggestions(dateKey).filter(s => s.viaHotel);
+        if (brut.length === 0) continue;
+        const lendemainDate = new Date(dateKey + "T00:00:00");
+        lendemainDate.setDate(lendemainDate.getDate() + 1);
+        const lendemainKey = dateToKey(lendemainDate);
+        const departLendemain = departs[lendemainKey];
+        if (!departLendemain || !departLendemain.coords) continue;
+        const affinees = await Promise.all(brut.map(async s => {
+          const trajetReel = await estimerTrajetMinReel(departLendemain.coords, s.client.coords);
+          return { ...s, trajet: trajetReel ?? 999 };
+        }));
+        resultats[dateKey] = affinees.filter(s => s.trajet <= 45).sort((a, b) => a.trajet - b.trajet);
+      }
+      if (!annule) setHotelSuggConfirmees(prev => ({ ...prev, ...resultats }));
+    }
+    verifier();
+    return () => { annule = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [JSON.stringify(joursAffiches), JSON.stringify(departs), domicile?.adresse]);
 
   function ajouterDepart() {
     if (!nouveauJour || !adresseInput.trim()) return;
@@ -2632,7 +2697,10 @@ function SemaineView({ departs, definirDepartJour, rdvParJourCalcule, joursTries
               r.jour === dateKey && !r.overrideTournee && !(r.clientId && clientIdsSeq.has(r.clientId))
             );
             const totalRdv = seq.length + rdvAgendaJour.length;
-            const suggestions = getSuggestions(dateKey);
+            const suggestionsBrutes = getSuggestions(dateKey);
+            const suggestionsNormales = suggestionsBrutes.filter(s => !s.viaHotel);
+            const suggestionsHotelConfirmees = hotelSuggConfirmees[dateKey] || [];
+            const suggestions = [...suggestionsNormales, ...suggestionsHotelConfirmees].slice(0, Math.max(0, 5 - totalRdv));
 
             return (
               <div className="tr-jour-block" key={dateKey}>
@@ -2678,10 +2746,12 @@ function SemaineView({ departs, definirDepartJour, rdvParJourCalcule, joursTries
                     // Trier par heure
                     lignes.sort((a, b) => a.heureMin - b.heureMin);
 
-                    // Intercaler les suggestions entre les RDV
+                    // Intercaler les suggestions normales entre les RDV ; les suggestions "près de l'hôtel"
+                    // restent en fin de journée puisqu'elles n'ont de sens qu'en dernière étape avant la nuitée.
                     const result = [];
                     let suggIdx = 0;
-                    const suggsTriees = [...suggestions]; // déjà triées par distance
+                    const suggsTriees = suggestions.filter(s => !s.viaHotel);
+                    const suggsHotel = suggestions.filter(s => s.viaHotel);
 
                     lignes.forEach((l, i) => {
                       result.push(l);
@@ -2692,11 +2762,14 @@ function SemaineView({ departs, definirDepartJour, rdvParJourCalcule, joursTries
                       }
                     });
 
-                    // Suggestions restantes à la fin
+                    // Suggestions normales restantes à la fin
                     while (suggIdx < suggsTriees.length) {
                       result.push({ type: "suggestion", s: suggsTriees[suggIdx] });
                       suggIdx++;
                     }
+
+                    // Suggestions "près de l'hôtel" toujours en toute dernière position de la journée
+                    suggsHotel.forEach(s => result.push({ type: "suggestion", s }));
 
                     return result.map((l, idx) => {
                       if (l.type === "tournee") {
