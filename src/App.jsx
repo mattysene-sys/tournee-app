@@ -2453,17 +2453,38 @@ function SemaineView({ departs, definirDepartJour, rdvParJourCalcule, joursTries
     ].filter(Boolean);
     const pointHotel = departLendemainSpecial ? departLendemainSpecial.coords : null;
 
+    // Dernier point connu de la journée (dernière visite, ou point de départ, ou domicile) —
+    // sert de départ pour calculer le détour réel jusqu'à l'hôtel, pas juste la distance au point final.
+    let dernierPointJournee = null;
+    if (seq.length > 0) {
+      const avecCoords = seq.filter(r => r.coords);
+      if (avecCoords.length > 0) {
+        dernierPointJournee = [...avecCoords].sort((a, b) => (a.heureArrivee || 0) - (b.heureArrivee || 0)).slice(-1)[0].coords;
+      }
+    }
+    if (!dernierPointJournee) dernierPointJournee = departJour ? departJour.coords : (domicile ? domicile.coords : null);
+    const routeDirecte = (dernierPointJournee && pointHotel) ? estimerTrajetMin(dernierPointJournee, pointHotel) : null;
+
     if (pointsNormaux.length === 0 && !pointHotel) return [];
 
     return (clients || [])
       .filter(c => c.coords && CIBLAGE_OK.includes(c.ciblage) && !dejaPlanifies.has(c.id))
       .map(c => {
-        // Seuil plus large pour un client proche de l'hôtel du lendemain : finir la journée là-bas
-        // est acceptable même avec un peu plus de route, contrairement à un simple détour entre deux visites.
+        // Seuil plus large pour un client sur le chemin de l'hôtel du lendemain : finir la journée
+        // là-bas est acceptable même avec un peu plus de route, contrairement à un simple détour entre deux visites.
         const distNormal = pointsNormaux.length ? Math.min(...pointsNormaux.map(p => estimerTrajetMin(p, c.coords) || 999)) : Infinity;
-        const distHotel = pointHotel ? (estimerTrajetMin(pointHotel, c.coords) ?? 999) : Infinity;
-        const viaHotel = distHotel < distNormal;
-        return { client: c, trajet: viaHotel ? distHotel : distNormal, score: CIBLAGE_SCORE[c.ciblage] || 0, viaHotel };
+
+        let detourViaHotel = Infinity;
+        if (dernierPointJournee && pointHotel && routeDirecte !== null) {
+          const aC = estimerTrajetMin(dernierPointJournee, c.coords);
+          const cB = estimerTrajetMin(c.coords, pointHotel);
+          if (aC !== null && cB !== null) detourViaHotel = aC + cB - routeDirecte;
+        }
+        const distHotelDirecte = pointHotel ? (estimerTrajetMin(pointHotel, c.coords) ?? 999) : Infinity;
+        const meilleurHotel = Math.min(detourViaHotel, distHotelDirecte);
+
+        const viaHotel = meilleurHotel < distNormal;
+        return { client: c, trajet: viaHotel ? meilleurHotel : distNormal, score: CIBLAGE_SCORE[c.ciblage] || 0, viaHotel };
       })
       .filter(x => x.viaHotel ? x.trajet <= 45 : x.trajet <= 20)
       .filter(x => x.trajet <= 20)
