@@ -816,11 +816,28 @@ function App({ code, onDeconnecter }) {
   // Vérifier si des clients ont confirmé un créneau proposé par email
   useEffect(() => {
     verifierConfirmationsRdv();
-    const onFocus = () => verifierConfirmationsRdv();
+    verifierRelancesEnAttente();
+    const onFocus = () => { verifierConfirmationsRdv(); verifierRelancesEnAttente(); };
     window.addEventListener('focus', onFocus);
     return () => window.removeEventListener('focus', onFocus);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [code]);
+
+  const [relancesEnAttente, setRelancesEnAttente] = useState(0);
+  async function verifierRelancesEnAttente() {
+    if (!code) return;
+    try {
+      const rows = await chargerToutesPropositions(code);
+      const seuil = Date.now() - 3 * 86400000;
+      const nb = (rows || []).filter(p => p.statut === "en_attente" && new Date(p.created_at).getTime() <= seuil).length;
+      setRelancesEnAttente(nb);
+    } catch {}
+  }
+
+  useEffect(() => {
+    if (vue === "reservations") verifierRelancesEnAttente();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [vue]);
 
   async function verifierConfirmationsRdv() {
     if (!code) return;
@@ -1544,6 +1561,46 @@ function App({ code, onDeconnecter }) {
     setTimeout(() => chercherCreneau(client, { type: "urgent" }), 60);
   }
 
+  async function relancerProposition(proposition) {
+    // Vérifie en temps réel que les créneaux initialement proposés sont toujours libres
+    // avant de renvoyer l'email — retire ceux qui ont été pris entre-temps.
+    let donnees = null;
+    try { donnees = await chargerDonneesDistantes(proposition.code); } catch {}
+    const occupationsJour = (jour) => [
+      ...((donnees?.agendaRdvs || []).filter(r => r.jour === jour).map(r => ({ debut: r.debut, fin: r.fin }))),
+      ...((donnees?.planning?.[jour] || []).filter(v => v.heureArrivee != null).map(v => ({ debut: minToHHMMInput(v.heureArrivee), fin: minToHHMMInput(v.heureFin) }))),
+    ];
+    const creneauxEncoreDisponibles = (proposition.creneaux || []).filter(c => {
+      const occ = occupationsJour(c.jour);
+      return !occ.some(o => creneauxSeChevauchent(c.debut, c.fin, o.debut, o.fin));
+    });
+
+    if (creneauxEncoreDisponibles.length === 0) {
+      showToast("Aucun des créneaux proposés n'est plus disponible — utilise plutôt \"Proposer d'autres créneaux\"", "error");
+      return;
+    }
+
+    // Si certains créneaux ne sont plus libres, on met à jour la proposition pour ne garder que les valides
+    if (creneauxEncoreDisponibles.length !== (proposition.creneaux || []).length) {
+      await supabaseFetch(`propositions_rdv?id=eq.${proposition.id}`, {
+        method: "PATCH",
+        headers: { Prefer: "return=minimal" },
+        body: JSON.stringify({ creneaux: creneauxEncoreDisponibles }),
+      });
+    }
+
+    const client = clients.find(c => c.id === proposition.client_id);
+    const lien = `${window.location.origin}${window.location.pathname}?reservation=${proposition.id}`;
+    const listeCreneaux = creneauxEncoreDisponibles.map(c => `- ${formatDateFr(c.jour)} à ${c.debut.replace(":", "h")}`).join("\n");
+    const sujet = encodeURIComponent(`Rappel — Proposition de rendez-vous — ${proposition.client_nom}`);
+    const corps = encodeURIComponent(
+      `Bonjour,\n\nJe me permets de revenir vers vous concernant ma précédente proposition de rendez-vous. Voici les créneaux encore disponibles :\n\n${listeCreneaux}\n\nMerci de choisir celui qui vous convient via ce lien :\n${lien}\n\nCordialement`
+    );
+    const destinataire = client?.email || "";
+    window.location.href = `mailto:${destinataire}?subject=${sujet}&body=${corps}`;
+    showToast("Relance préparée — vérifie ta messagerie", "ok");
+  }
+
   function supprimerVisite(dateKey, clientId) {
     setPlanning((p) => {
       const np = { ...p };
@@ -1727,7 +1784,14 @@ function App({ code, onDeconnecter }) {
             <button className={`tr-tab ${vue === "prochain-rdv" ? "active" : ""}`} onClick={() => setVue("prochain-rdv")} disabled={clients.length === 0}>Prochain RDV</button>
             <button className={`tr-tab ${vue === "semaine" ? "active" : ""}`} onClick={() => setVue("semaine")} disabled={clients.length === 0}>Ma semaine</button>
             <button className={`tr-tab ${vue === "agenda" ? "active" : ""}`} onClick={() => setVue("agenda")} disabled={clients.length === 0}>Agenda</button>
-            <button className={`tr-tab ${vue === "reservations" ? "active" : ""}`} onClick={() => setVue("reservations")} disabled={clients.length === 0}>Réservations</button>
+            <button className={`tr-tab ${vue === "reservations" ? "active" : ""}`} onClick={() => setVue("reservations")} disabled={clients.length === 0} style={{ position:"relative" }}>
+              Réservations
+              {relancesEnAttente > 0 && (
+                <span style={{ position:"absolute", top:-6, right:-6, background:"var(--rouge)", color:"white", borderRadius:999, fontSize:10, fontFamily:"'Oswald',sans-serif", minWidth:16, height:16, display:"flex", alignItems:"center", justifyContent:"center", padding:"0 3px" }}>
+                  {relancesEnAttente}
+                </span>
+              )}
+            </button>
             <button className="tr-tab" onClick={onDeconnecter} title="Changer d'espace">⎋</button>
           </div>
         </header>
@@ -2144,7 +2208,7 @@ function App({ code, onDeconnecter }) {
 
         {/* VUE : RESERVATIONS EN LIGNE */}
         {vue === "reservations" && (
-          <VueReservations code={code} clients={clients} onRenvoyer={renvoyerPropositionAutreCreneaux} />
+          <VueReservations code={code} clients={clients} onRenvoyer={renvoyerPropositionAutreCreneaux} onRelancer={relancerProposition} />
         )}
       </div>
 
@@ -2333,11 +2397,12 @@ function FormulaireAjoutClient({ onAjouter, enCours }) {
 // ============================================================
 // Sous-composant : vue des réservations prises en ligne par les clients
 // ============================================================
-function VueReservations({ code, clients, onRenvoyer }) {
+function VueReservations({ code, clients, onRenvoyer, onRelancer }) {
   const [propositions, setPropositions] = useState(null);
   const [chargement, setChargement] = useState(true);
   const [filtre, setFiltre] = useState("toutes"); // toutes | en_attente | confirmees
   const [renvoiEnCoursId, setRenvoiEnCoursId] = useState(null);
+  const [relanceEnCoursId, setRelanceEnCoursId] = useState(null);
 
   async function charger() {
     setChargement(true);
@@ -2369,6 +2434,18 @@ function VueReservations({ code, clients, onRenvoyer }) {
     await onRenvoyer(p);
     await charger();
     setRenvoiEnCoursId(null);
+  }
+
+  async function handleRelancer(p) {
+    setRelanceEnCoursId(p.id);
+    await onRelancer(p);
+    await charger();
+    setRelanceEnCoursId(null);
+  }
+
+  function joursDepuis(dateIso) {
+    if (!dateIso) return 0;
+    return Math.floor((Date.now() - new Date(dateIso).getTime()) / 86400000);
   }
 
   return (
@@ -2405,12 +2482,18 @@ function VueReservations({ code, clients, onRenvoyer }) {
                 Créneaux proposés : {(p.creneaux || []).map(c => `${formatDateCourt(c.jour)} à ${c.debut.replace(":","h")}`).join(" · ")}
               </div>
             )}
-            <div style={{ fontSize:11, color:"var(--gris)", marginTop:6 }}>Proposé le {formatDateCourt(p.created_at?.slice(0,10))}</div>
+            <div style={{ fontSize:11, color:"var(--gris)", marginTop:6 }}>Proposé le {formatDateCourt(p.created_at?.slice(0,10))}{p.statut === "en_attente" && joursDepuis(p.created_at) >= 1 ? ` · en attente depuis ${joursDepuis(p.created_at)} jour${joursDepuis(p.created_at) > 1 ? "s" : ""}` : ""}</div>
             {p.statut === "en_attente" && (
-              <button className="tr-btn tr-btn-outline tr-btn-sm" style={{ marginTop:10 }}
-                onClick={() => handleRenvoyer(p)} disabled={renvoiEnCoursId === p.id}>
-                <RefreshCw size={12}/> {renvoiEnCoursId === p.id ? "Annulation..." : "Le client a refusé — proposer d'autres créneaux"}
-              </button>
+              <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginTop:10 }}>
+                <button className="tr-btn tr-btn-outline tr-btn-sm"
+                  onClick={() => handleRelancer(p)} disabled={relanceEnCoursId === p.id}>
+                  <Mail size={12}/> {relanceEnCoursId === p.id ? "Vérification..." : "Relancer (vérifie la dispo)"}
+                </button>
+                <button className="tr-btn tr-btn-outline tr-btn-sm"
+                  onClick={() => handleRenvoyer(p)} disabled={renvoiEnCoursId === p.id}>
+                  <RefreshCw size={12}/> {renvoiEnCoursId === p.id ? "Annulation..." : "Le client a refusé — proposer d'autres créneaux"}
+                </button>
+              </div>
             )}
           </div>
         );
