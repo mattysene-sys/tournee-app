@@ -2447,20 +2447,25 @@ function SemaineView({ departs, definirDepartJour, rdvParJourCalcule, joursTries
       ...(agendaRdvs || []).filter(r => r.clientId).map(r => r.clientId),
     ]);
 
-    const pointsRef = [
+    const pointsNormaux = [
       ...(departJour ? [departJour.coords] : domicile ? [domicile.coords] : []),
       ...seq.filter(r => r.coords).map(r => r.coords),
-      ...(departLendemainSpecial ? [departLendemainSpecial.coords] : []),
     ].filter(Boolean);
+    const pointHotel = departLendemainSpecial ? departLendemainSpecial.coords : null;
 
-    if (pointsRef.length === 0) return [];
+    if (pointsNormaux.length === 0 && !pointHotel) return [];
 
     return (clients || [])
       .filter(c => c.coords && CIBLAGE_OK.includes(c.ciblage) && !dejaPlanifies.has(c.id))
       .map(c => {
-        const distMin = Math.min(...pointsRef.map(p => estimerTrajetMin(p, c.coords) || 999));
-        return { client: c, trajet: distMin, score: CIBLAGE_SCORE[c.ciblage] || 0 };
+        // Seuil plus large pour un client proche de l'hôtel du lendemain : finir la journée là-bas
+        // est acceptable même avec un peu plus de route, contrairement à un simple détour entre deux visites.
+        const distNormal = pointsNormaux.length ? Math.min(...pointsNormaux.map(p => estimerTrajetMin(p, c.coords) || 999)) : Infinity;
+        const distHotel = pointHotel ? (estimerTrajetMin(pointHotel, c.coords) ?? 999) : Infinity;
+        const viaHotel = distHotel < distNormal;
+        return { client: c, trajet: viaHotel ? distHotel : distNormal, score: CIBLAGE_SCORE[c.ciblage] || 0, viaHotel };
       })
+      .filter(x => x.viaHotel ? x.trajet <= 45 : x.trajet <= 20)
       .filter(x => x.trajet <= 20)
       .sort((a, b) => a.trajet - b.trajet || b.score - a.score)
       .slice(0, 5 - totalRdv);
@@ -2718,10 +2723,10 @@ function SemaineView({ departs, definirDepartJour, rdvParJourCalcule, joursTries
                         const { s } = l;
                         return (
                           <div key={"sugg-" + s.client.id} style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 8px", borderLeft: "3px solid var(--or)", background: "#FFFBEC", borderRadius: "0 6px 6px 0", marginTop: 1 }}>
-                            <span style={{ fontSize: 13, flexShrink: 0 }}>💡</span>
+                            <span style={{ fontSize: 13, flexShrink: 0 }}>{s.viaHotel ? "🏨" : "💡"}</span>
                             <span style={{ flex: 1, fontSize: 12.5, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", color: "var(--ardoise)" }}>
                               {s.client.etablissement}
-                              <span style={{ fontWeight: 400, color: "var(--gris)", marginLeft: 5 }}>{s.trajet} min</span>
+                              <span style={{ fontWeight: 400, color: "var(--gris)", marginLeft: 5 }}>{s.trajet} min{s.viaHotel ? " de l'hôtel" : ""}</span>
                             </span>
                             <span style={{ fontSize: 10, fontFamily: "'Oswald',sans-serif", color: "var(--or)", flexShrink: 0 }}>{s.client.ciblage}</span>
                             <button onClick={() => { if (onChercherCreneau) onChercherCreneau(s.client, { type: "date", date: dateKey }); if (setVue) setVue("prochain-rdv"); }}
