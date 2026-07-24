@@ -1534,6 +1534,24 @@ function App({ code, onDeconnecter }) {
         toutesLesVisites.push({ jour, etablissement: `ton point de départ (${d.adresse})`, coords: d.coords, heureArrivee: hhmmToMin(d.heure || "08:00") });
       });
 
+      // Récupère les occupations déjà présentes un jour donné (visites Tournée + RDV agenda),
+      // pour ne jamais proposer un créneau découcher qui chevauche un rendez-vous existant.
+      function occupationsDuJour(jour) {
+        const liste = [];
+        (rdvParJourCalcule[jour] || []).forEach(item => {
+          if (item.client.id === client.id) return;
+          liste.push({ debut: item.heureArrivee, fin: item.fin });
+        });
+        (donnees.agendaRdvs || []).forEach(r => {
+          if (r.jour !== jour) return;
+          liste.push({ debut: hhmmToMin(r.debut), fin: hhmmToMin(r.fin) });
+        });
+        return liste;
+      }
+      function chevauchementMin(aDebut, aFin, bDebut, bFin) {
+        return aDebut < bFin && bDebut < aFin;
+      }
+
       const optionsDecoucher = [];
       toutesLesVisites.forEach(v => {
         if (v.jour < dateToKey(aujourdHuiDate)) return;
@@ -1543,7 +1561,9 @@ function App({ code, onDeconnecter }) {
         const lendemain = new Date(v.jour + "T00:00:00");
         lendemain.setDate(lendemain.getDate() + 1);
         const dkLendemain = dateToKey(lendemain);
-        if (estJourOuvre(dkLendemain) && !(planning[dkLendemain] || []).some(r2 => r2.clientId === client.id)) {
+        const occLendemain = occupationsDuJour(dkLendemain);
+        const conflitLendemain = occLendemain.some(o => chevauchementMin(JOURNEE_DEBUT, JOURNEE_DEBUT + duree, o.debut, o.fin));
+        if (estJourOuvre(dkLendemain) && !conflitLendemain && !(planning[dkLendemain] || []).some(r2 => r2.clientId === client.id)) {
           optionsDecoucher.push({
             jour: dkLendemain, type: "lendemain", ancrage: v.etablissement, jourAncrage: v.jour, coordsAncrage: v.coords,
             trajetProximite, arrivee: JOURNEE_DEBUT, duree, fin: JOURNEE_DEBUT + duree,
@@ -1553,9 +1573,20 @@ function App({ code, onDeconnecter }) {
         const veille = new Date(v.jour + "T00:00:00");
         veille.setDate(veille.getDate() - 1);
         const dkVeille = dateToKey(veille);
-        if (estJourOuvre(dkVeille) && !(planning[dkVeille] || []).some(r2 => r2.clientId === client.id)) {
-          // Positionné en fin de journée (pas dérivé de l'heure du lendemain, qui n'a pas de sens ici)
-          const arriveeVeille = Math.max(JOURNEE_DEBUT, JOURNEE_FIN - duree);
+        // Positionné en fin de journée par défaut (pas dérivé de l'heure du lendemain, qui n'a pas de sens ici) ;
+        // si ça chevauche un RDV déjà présent, on essaie juste après la dernière visite de ce jour-là.
+        const occVeille = occupationsDuJour(dkVeille);
+        let arriveeVeille = Math.max(JOURNEE_DEBUT, JOURNEE_FIN - duree);
+        let conflitVeille = occVeille.some(o => chevauchementMin(arriveeVeille, arriveeVeille + duree, o.debut, o.fin));
+        if (conflitVeille && occVeille.length > 0) {
+          const derniereFin = Math.max(...occVeille.map(o => o.fin));
+          const alternative = Math.max(JOURNEE_DEBUT, derniereFin);
+          if (alternative + duree <= JOURNEE_FIN && !occVeille.some(o => chevauchementMin(alternative, alternative + duree, o.debut, o.fin))) {
+            arriveeVeille = alternative;
+            conflitVeille = false;
+          }
+        }
+        if (estJourOuvre(dkVeille) && !conflitVeille && !(planning[dkVeille] || []).some(r2 => r2.clientId === client.id)) {
           optionsDecoucher.push({
             jour: dkVeille, type: "veille", ancrage: v.etablissement, jourAncrage: v.jour, coordsAncrage: v.coords,
             trajetProximite, arrivee: arriveeVeille, duree, fin: arriveeVeille + duree,
