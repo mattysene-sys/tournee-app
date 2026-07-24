@@ -2669,6 +2669,7 @@ function VueOffres({ code, clients, showToast }) {
   const [chargementHistorique, setChargementHistorique] = useState(true);
   const [filtreHistorique, setFiltreHistorique] = useState("toutes");
   const [titreAReprendre, setTitreAReprendre] = useState("");
+  const [majStatutEnCoursId, setMajStatutEnCoursId] = useState(null);
 
   async function chargerHistorique() {
     setChargementHistorique(true);
@@ -2678,6 +2679,14 @@ function VueOffres({ code, clients, showToast }) {
   }
 
   useEffect(() => { chargerHistorique(); }, [code]);
+
+  async function notifierManuellement(id, statut) {
+    setMajStatutEnCoursId(id);
+    await repondreOffre(id, statut);
+    await chargerHistorique();
+    setMajStatutEnCoursId(null);
+    showToast(statut === "accepte" ? "Marqué comme accepté ✓" : "Marqué comme refusé", "ok");
+  }
 
   const clientsFiltres = recherche.trim()
     ? clients.filter(c => c.etablissement.toLowerCase().includes(recherche.toLowerCase()) || (c.ville || "").toLowerCase().includes(recherche.toLowerCase()))
@@ -2955,6 +2964,18 @@ function VueOffres({ code, clients, showToast }) {
                 Envoyée le {formatDateCourt(o.created_at?.slice(0,10))}
                 {o.reponse_le ? ` · réponse le ${formatDateCourt(o.reponse_le.slice(0,10))}` : ""}
               </div>
+              {o.statut === "envoye" && (
+                <div style={{ display:"flex", gap:8, marginTop:10 }}>
+                  <button className="tr-btn tr-btn-sm" style={{ background:"var(--vert)", color:"white", border:"none" }}
+                    onClick={() => notifierManuellement(o.id, "accepte")} disabled={majStatutEnCoursId === o.id}>
+                    <CheckCircle2 size={12}/> {majStatutEnCoursId === o.id ? "..." : "Marquer accepté"}
+                  </button>
+                  <button className="tr-btn tr-btn-sm" style={{ background:"var(--rouge)", color:"white", border:"none" }}
+                    onClick={() => notifierManuellement(o.id, "refuse")} disabled={majStatutEnCoursId === o.id}>
+                    <X size={12}/> {majStatutEnCoursId === o.id ? "..." : "Marquer refusé"}
+                  </button>
+                </div>
+              )}
             </div>
           );
         })}
