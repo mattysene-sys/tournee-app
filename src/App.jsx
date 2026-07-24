@@ -844,6 +844,10 @@ function PageOffre({ id }) {
   return (
     <div style={S2.root}>
       <div style={S2.card}>
+        {offre.offre_image_url && (
+          <img src={offre.offre_image_url} alt="" style={{ width:"100%", borderRadius:8, marginBottom:16, display:"block", objectFit:"cover", maxHeight:280 }}
+            onError={(e) => { e.target.style.display = "none"; }} />
+        )}
         <div style={S2.title}>{offre.offre_titre}</div>
         <div style={S2.sub}>{offre.client_nom}</div>
         <div style={{ fontSize:14, lineHeight:1.6, whiteSpace:"pre-wrap", marginBottom:24, color:"#1C2630" }}>{offre.offre_description}</div>
@@ -2634,11 +2638,16 @@ function VueReservations({ code, clients, onRenvoyer, onRelancer }) {
 function VueOffres({ code, clients, showToast }) {
   const [titre, setTitre] = useState("");
   const [description, setDescription] = useState("");
+  const [imageUrl, setImageUrl] = useState("");
   const [recherche, setRecherche] = useState("");
   const [selectionIds, setSelectionIds] = useState(new Set());
   const [envoiEnCours, setEnvoiEnCours] = useState(false);
   const [offresPretes, setOffresPretes] = useState(null); // lignes créées, prêtes à envoyer une à une
   const [offresEnvoyees, setOffresEnvoyees] = useState(new Set());
+  const [ajoutClientsOuvert, setAjoutClientsOuvert] = useState(false);
+  const [rechercheAjout, setRechercheAjout] = useState("");
+  const [selectionAjoutIds, setSelectionAjoutIds] = useState(new Set());
+  const [ajoutEnCours, setAjoutEnCours] = useState(false);
   const [historique, setHistorique] = useState(null);
   const [chargementHistorique, setChargementHistorique] = useState(true);
   const [filtreHistorique, setFiltreHistorique] = useState("toutes");
@@ -2673,7 +2682,7 @@ function VueOffres({ code, clients, showToast }) {
     const lignes = Array.from(selectionIds).map(id => {
       const c = clients.find(cl => cl.id === id);
       return {
-        code, offre_titre: titre.trim(), offre_description: description.trim(),
+        code, offre_titre: titre.trim(), offre_description: description.trim(), offre_image_url: imageUrl.trim() || null,
         client_id: id, client_nom: c?.etablissement || "Client", client_email: c?.email || null,
         statut: "envoye",
       };
@@ -2694,8 +2703,43 @@ function VueOffres({ code, clients, showToast }) {
     setOffresEnvoyees(prev => new Set([...prev, row.id]));
   }
 
+  function toggleSelectionAjout(id) {
+    setSelectionAjoutIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
+  const idsDejaDansOffre = new Set((offresPretes || []).map(r => r.client_id));
+  const clientsFiltresAjout = clients.filter(c => !idsDejaDansOffre.has(c.id)
+    && (!rechercheAjout.trim() || c.etablissement.toLowerCase().includes(rechercheAjout.toLowerCase()) || (c.ville || "").toLowerCase().includes(rechercheAjout.toLowerCase())));
+
+  async function ajouterClientsAOffre() {
+    if (selectionAjoutIds.size === 0 || !offresPretes || offresPretes.length === 0) return;
+    setAjoutEnCours(true);
+    const reference = offresPretes[0];
+    const lignes = Array.from(selectionAjoutIds).map(id => {
+      const c = clients.find(cl => cl.id === id);
+      return {
+        code, offre_titre: reference.offre_titre, offre_description: reference.offre_description, offre_image_url: reference.offre_image_url || null,
+        client_id: id, client_nom: c?.etablissement || "Client", client_email: c?.email || null,
+        statut: "envoye",
+      };
+    });
+    const rows = await creerOffresClients(lignes);
+    setAjoutEnCours(false);
+    if (!rows) { showToast("Erreur lors de l'ajout des pharmacies", "error"); return; }
+    setOffresPretes(prev => [...prev, ...rows]);
+    setSelectionAjoutIds(new Set());
+    setRechercheAjout("");
+    setAjoutClientsOuvert(false);
+    showToast(`${rows.length} pharmacie${rows.length > 1 ? "s" : ""} ajoutée${rows.length > 1 ? "s" : ""} à l'offre`, "ok");
+  }
+
   function toutRecommencer() {
-    setTitre(""); setDescription(""); setSelectionIds(new Set()); setOffresPretes(null); setOffresEnvoyees(new Set());
+    setTitre(""); setDescription(""); setImageUrl(""); setSelectionIds(new Set()); setOffresPretes(null); setOffresEnvoyees(new Set());
+    setAjoutClientsOuvert(false); setSelectionAjoutIds(new Set()); setRechercheAjout("");
     chargerHistorique();
   }
 
@@ -2725,6 +2769,11 @@ function VueOffres({ code, clients, showToast }) {
               <textarea className="tr-input" style={{ height:120, resize:"vertical" }} placeholder="Détail de l'offre, conditions, dates de validité..." value={description} onChange={e => setDescription(e.target.value)} />
             </div>
             <div className="tr-field">
+              <label className="tr-label">Image d'illustration (optionnel — URL)</label>
+              <input className="tr-input" placeholder="https://..." value={imageUrl} onChange={e => setImageUrl(e.target.value)} />
+              <p style={{ fontSize:11, color:"var(--gris)", marginTop:6, marginBottom:0 }}>L'image ne peut pas s'afficher dans l'email lui-même (limite technique), mais apparaîtra sur la page que le client ouvre en cliquant sur le lien.</p>
+            </div>
+            <div className="tr-field">
               <label className="tr-label">Pharmacies concernées ({selectionIds.size} sélectionnée{selectionIds.size > 1 ? "s" : ""})</label>
               <div className="tr-search">
                 <Search size={15} />
@@ -2750,6 +2799,7 @@ function VueOffres({ code, clients, showToast }) {
           </>
         ) : (
           <>
+            <div style={{ fontFamily:"'Oswald',sans-serif", fontSize:16, fontWeight:600, marginBottom:4 }}>{offresPretes[0]?.offre_titre}</div>
             <div style={{ fontSize:13, color:"var(--gris)", marginBottom:14, lineHeight:1.5 }}>
               Clique sur chaque pharmacie pour ouvrir l'email pré-rempli (un par un, ta messagerie s'ouvre à chaque clic).
             </div>
@@ -2765,8 +2815,42 @@ function VueOffres({ code, clients, showToast }) {
                 </button>
               </div>
             ))}
+
+            {!ajoutClientsOuvert ? (
+              <button className="tr-btn tr-btn-outline tr-btn-full" style={{ marginTop:6 }} onClick={() => setAjoutClientsOuvert(true)}>
+                <Plus size={14}/> Ajouter d'autres pharmacies à cette offre
+              </button>
+            ) : (
+              <div style={{ background:"#FAFAF8", border:"1.5px solid var(--gris-clair)", borderRadius:10, padding:14, marginTop:6 }}>
+                <label className="tr-label">Ajouter des pharmacies ({selectionAjoutIds.size} sélectionnée{selectionAjoutIds.size > 1 ? "s" : ""})</label>
+                <div className="tr-search">
+                  <Search size={15} />
+                  <input className="tr-input" placeholder="Rechercher un établissement ou une ville..." value={rechercheAjout} onChange={(e) => setRechercheAjout(e.target.value)} />
+                </div>
+                <div className="tr-clients-list" style={{ maxHeight:240 }}>
+                  {clientsFiltresAjout.slice(0, 60).map(c => (
+                    <div key={c.id} className="tr-client-row" onClick={() => toggleSelectionAjout(c.id)} style={{ cursor:"pointer" }}>
+                      <div style={{ width:18, height:18, borderRadius:4, border:"1.5px solid", borderColor: selectionAjoutIds.has(c.id) ? "var(--orange)" : "var(--gris-clair)", background: selectionAjoutIds.has(c.id) ? "var(--orange)" : "white", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+                        {selectionAjoutIds.has(c.id) && <CheckCircle2 size={12} color="white" strokeWidth={3}/>}
+                      </div>
+                      <div className="tr-client-row-main">
+                        <div className="tr-client-row-name">{c.etablissement}</div>
+                        <div className="tr-client-row-meta">{c.ville}{!c.email ? " · pas d'email connu" : ""}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div style={{ display:"flex", gap:8, marginTop:10 }}>
+                  <button className="tr-btn tr-btn-outline" style={{ flex:1, fontSize:12 }} onClick={() => { setAjoutClientsOuvert(false); setSelectionAjoutIds(new Set()); }}>Annuler</button>
+                  <button className="tr-btn tr-btn-primary" style={{ flex:2, fontSize:12 }} onClick={ajouterClientsAOffre} disabled={ajoutEnCours || selectionAjoutIds.size === 0}>
+                    {ajoutEnCours ? "Ajout..." : `Ajouter ${selectionAjoutIds.size} pharmacie${selectionAjoutIds.size > 1 ? "s" : ""}`}
+                  </button>
+                </div>
+              </div>
+            )}
+
             <button className="tr-btn tr-btn-outline tr-btn-full" style={{ marginTop:10 }} onClick={toutRecommencer}>
-              <Plus size={14}/> Nouvelle offre
+              <Plus size={14}/> Nouvelle offre (différente)
             </button>
           </>
         )}
