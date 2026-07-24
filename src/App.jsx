@@ -1052,6 +1052,7 @@ function App({ code, onDeconnecter }) {
   const [suggestions, setSuggestions] = useState(null);
   const [calcEnCours, setCalcEnCours] = useState(false);
   const [creneauxAProposer, setCreneauxAProposer] = useState(new Set());
+  const [creneauxDecoucherAProposer, setCreneauxDecoucherAProposer] = useState(new Set());
   const [envoiEmailEnCours, setEnvoiEmailEnCours] = useState(false);
   const [modeRecherche, setModeRecherche] = useState("urgent");
   const [horizonJours, setHorizonJours] = useState(90);
@@ -1289,6 +1290,7 @@ function App({ code, onDeconnecter }) {
     setSuggestions(null);
     setCreneauRetenu(null);
     setCreneauxAProposer(new Set());
+    setCreneauxDecoucherAProposer(new Set());
     setConseilDecoucher(null);
     setSuggestionsDecoucher([]);
     const duree = dureeVoulue || client.dureeDefaut || 45;
@@ -1552,7 +1554,8 @@ function App({ code, onDeconnecter }) {
         veille.setDate(veille.getDate() - 1);
         const dkVeille = dateToKey(veille);
         if (estJourOuvre(dkVeille) && !(planning[dkVeille] || []).some(r2 => r2.clientId === client.id)) {
-          const arriveeVeille = Math.max(JOURNEE_DEBUT, v.heureArrivee - trajetProximite - duree);
+          // Positionné en fin de journée (pas dérivé de l'heure du lendemain, qui n'a pas de sens ici)
+          const arriveeVeille = Math.max(JOURNEE_DEBUT, JOURNEE_FIN - duree);
           optionsDecoucher.push({
             jour: dkVeille, type: "veille", ancrage: v.etablissement, jourAncrage: v.jour, coordsAncrage: v.coords,
             trajetProximite, arrivee: arriveeVeille, duree, fin: arriveeVeille + duree,
@@ -1623,12 +1626,18 @@ function App({ code, onDeconnecter }) {
   }
 
   async function envoyerPropositionEmail() {
-    if (!clientSelectionne || creneauxAProposer.size === 0 || !suggestions) return;
+    const nbSelection = creneauxAProposer.size + creneauxDecoucherAProposer.size;
+    if (!clientSelectionne || nbSelection === 0) return;
     setEnvoiEmailEnCours(true);
-    const creneaux = Array.from(creneauxAProposer).sort((a,b)=>a-b).map(idx => {
+    const creneauxNormaux = Array.from(creneauxAProposer).sort((a,b)=>a-b).map(idx => {
       const s = suggestions[idx];
       return { jour: s.jour, debut: minToHHMMInput(s.arrivee), fin: minToHHMMInput(s.fin) };
     });
+    const creneauxDecoucher = Array.from(creneauxDecoucherAProposer).sort((a,b)=>a-b).map(idx => {
+      const o = suggestionsDecoucher[idx];
+      return { jour: o.jour, debut: minToHHMMInput(o.arrivee), fin: minToHHMMInput(o.fin) };
+    });
+    const creneaux = [...creneauxNormaux, ...creneauxDecoucher];
     const proposition = await creerPropositionRdv({
       code,
       clientId: clientSelectionne.id,
@@ -1661,6 +1670,7 @@ function App({ code, onDeconnecter }) {
     const destinataire = clientSelectionne.email || "";
     window.location.href = `mailto:${destinataire}?subject=${sujet}&body=${corps}`;
     setCreneauxAProposer(new Set());
+    setCreneauxDecoucherAProposer(new Set());
     showToast("Email préparé — vérifie ta messagerie", "ok");
   }
 
@@ -2180,9 +2190,16 @@ function App({ code, onDeconnecter }) {
                       <div style={{ fontSize:12, color:"#993C1D", marginBottom:12, lineHeight:1.5 }}>
                         {clientSelectionne.etablissement} est loin de ton domicile, mais tu as déjà une visite à proximité ces jours-là. Dormir sur place évite l'aller-retour complet.
                       </div>
+                      <div style={{ fontSize:11.5, color:"#993C1D", marginBottom:12, fontStyle:"italic" }}>
+                        Coche aussi ces créneaux si tu veux les proposer par email au client, comme les suggestions classiques.
+                      </div>
                       <div className="tr-sugg-list">
                         {suggestionsDecoucher.map((o, idx) => (
-                          <div key={`decoucher-${o.jour}-${idx}`} className="tr-sugg-card" style={{ paddingLeft:16, borderColor:"var(--orange)" }}>
+                          <div key={`decoucher-${o.jour}-${idx}`} className="tr-sugg-card" style={{ paddingLeft:44, borderColor:"var(--orange)" }}>
+                            <input type="checkbox" checked={creneauxDecoucherAProposer.has(idx)}
+                              onChange={() => setCreneauxDecoucherAProposer(prev => { const next = new Set(prev); if (next.has(idx)) next.delete(idx); else next.add(idx); return next; })}
+                              style={{ position:"absolute", left:14, top:16, width:18, height:18, cursor:"pointer", accentColor:"var(--orange)" }}
+                              title="Proposer ce créneau par email"/>
                             <div className="tr-sugg-top">
                               <span className="tr-sugg-jour">{formatDateFr(o.jour)}</span>
                               <span className="tr-sugg-cout">{formatMin(o.trajetProximite)} de l'ancrage</span>
@@ -2254,13 +2271,13 @@ function App({ code, onDeconnecter }) {
                       </div>
                     ))}
                   </div>
-                  {creneauxAProposer.size > 0 && (
+                  {(creneauxAProposer.size + creneauxDecoucherAProposer.size) > 0 && (
                     <button className="tr-btn tr-btn-full" style={{ marginTop:12, background:"#185FA5", color:"white" }}
                       onClick={envoyerPropositionEmail} disabled={envoiEmailEnCours}>
-                      <Mail size={14}/> {envoiEmailEnCours ? "Préparation..." : `Proposer ${creneauxAProposer.size} créneau${creneauxAProposer.size>1?"x":""} par email`}
+                      <Mail size={14}/> {envoiEmailEnCours ? "Préparation..." : `Proposer ${creneauxAProposer.size + creneauxDecoucherAProposer.size} créneau${(creneauxAProposer.size + creneauxDecoucherAProposer.size)>1?"x":""} par email`}
                     </button>
                   )}
-                  <button className="tr-btn tr-btn-ghost tr-btn-full" style={{ marginTop: 12 }} onClick={() => { setSuggestions(null); setClientSelectionne(null); setSuggIdxOuvert(null); setCreneauxAProposer(new Set()); }}>Annuler</button>
+                  <button className="tr-btn tr-btn-ghost tr-btn-full" style={{ marginTop: 12 }} onClick={() => { setSuggestions(null); setClientSelectionne(null); setSuggIdxOuvert(null); setCreneauxAProposer(new Set()); setCreneauxDecoucherAProposer(new Set()); }}>Annuler</button>
                 </div>
               )}
             </div>
