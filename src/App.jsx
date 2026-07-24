@@ -2651,6 +2651,7 @@ function VueOffres({ code, clients, showToast }) {
   const [historique, setHistorique] = useState(null);
   const [chargementHistorique, setChargementHistorique] = useState(true);
   const [filtreHistorique, setFiltreHistorique] = useState("toutes");
+  const [titreAReprendre, setTitreAReprendre] = useState("");
 
   async function chargerHistorique() {
     setChargementHistorique(true);
@@ -2750,9 +2751,37 @@ function VueOffres({ code, clients, showToast }) {
   };
 
   const historiqueFiltre = (historique || []).filter(o => filtreHistorique === "toutes" ? true : o.statut === filtreHistorique);
+
+  // Liste des offres distinctes déjà envoyées (par titre), pour pouvoir les reprendre et les compléter
+  const offresDistinctes = Array.from(
+    new Map((historique || []).map(o => [o.offre_titre, o])).values()
+  );
+
+  function reprendreOffre(offreTitreRef) {
+    const lignesExistantes = (historique || []).filter(o => o.offre_titre === offreTitreRef);
+    if (lignesExistantes.length === 0) return;
+    setTitre(lignesExistantes[0].offre_titre);
+    setDescription(lignesExistantes[0].offre_description || "");
+    setImageUrl(lignesExistantes[0].offre_image_url || "");
+    setOffresPretes(lignesExistantes);
+    setOffresEnvoyees(new Set(lignesExistantes.map(l => l.id))); // déjà envoyées précédemment
+  }
   const nbAcceptees = (historique || []).filter(o => o.statut === "accepte").length;
   const nbRefusees = (historique || []).filter(o => o.statut === "refuse").length;
   const nbSansReponse = (historique || []).filter(o => o.statut === "envoye").length;
+
+  const titresDistincts = Array.from(new Set((historique || []).map(o => o.offre_titre))).sort();
+
+  function reprendreOffre() {
+    if (!titreAReprendre) return;
+    const lignesExistantes = (historique || []).filter(o => o.offre_titre === titreAReprendre);
+    if (lignesExistantes.length === 0) return;
+    setOffresPretes(lignesExistantes);
+    setOffresEnvoyees(new Set());
+    setAjoutClientsOuvert(true);
+    setTitreAReprendre("");
+    showToast(`Offre "${titreAReprendre}" chargée — ajoute de nouvelles pharmacies ci-dessus`, "ok");
+  }
 
   return (
     <div className="tr-grid">
@@ -2760,6 +2789,17 @@ function VueOffres({ code, clients, showToast }) {
         <div className="tr-card-title"><Mail size={14}/> Nouvelle offre commerciale</div>
         {!offresPretes ? (
           <>
+            {offresDistinctes.length > 0 && (
+              <div className="tr-field">
+                <label className="tr-label">Ou compléter une offre déjà envoyée</label>
+                <select className="tr-select" defaultValue="" onChange={e => { if (e.target.value) reprendreOffre(e.target.value); e.target.value = ""; }}>
+                  <option value="" disabled>Choisir une offre existante...</option>
+                  {offresDistinctes.map(o => (
+                    <option key={o.offre_titre} value={o.offre_titre}>{o.offre_titre}</option>
+                  ))}
+                </select>
+              </div>
+            )}
             <div className="tr-field">
               <label className="tr-label">Titre de l'offre</label>
               <input className="tr-input" placeholder="Ex: Offre spéciale rentrée" value={titre} onChange={e => setTitre(e.target.value)} />
@@ -2861,6 +2901,20 @@ function VueOffres({ code, clients, showToast }) {
           <span style={{ display:"flex", alignItems:"center", gap:7 }}><History size={14}/> Historique des offres</span>
           <button className="tr-btn tr-btn-sm tr-btn-outline" onClick={chargerHistorique}><RefreshCw size={12}/> Actualiser</button>
         </div>
+
+        {titresDistincts.length > 0 && (
+          <div style={{ background:"#F5F2EC", borderRadius:8, padding:12, marginBottom:16 }}>
+            <label className="tr-label">Compléter une offre déjà envoyée</label>
+            <select className="tr-select" value={titreAReprendre} onChange={e => setTitreAReprendre(e.target.value)} style={{ marginBottom:8 }}>
+              <option value="">— Choisir une offre —</option>
+              {titresDistincts.map(t => <option key={t} value={t}>{t}</option>)}
+            </select>
+            <button className="tr-btn tr-btn-outline tr-btn-full" style={{ fontSize:12 }} disabled={!titreAReprendre} onClick={reprendreOffre}>
+              <Plus size={13}/> Ajouter des pharmacies à cette offre
+            </button>
+          </div>
+        )}
+
         <div className="tr-mode-row" style={{ marginBottom:16 }}>
           <button className={`tr-mode-btn ${filtreHistorique === "toutes" ? "active" : ""}`} onClick={() => setFiltreHistorique("toutes")}>Toutes ({(historique || []).length})</button>
           <button className={`tr-mode-btn ${filtreHistorique === "envoye" ? "active" : ""}`} onClick={() => setFiltreHistorique("envoye")}>Sans réponse ({nbSansReponse})</button>
