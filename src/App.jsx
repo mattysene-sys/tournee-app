@@ -284,6 +284,41 @@ async function chargerToutesPropositions(code) {
 }
 
 // ============================================================
+// Offres commerciales ponctuelles envoyées à plusieurs pharmacies
+// ============================================================
+async function creerOffresClients(lignes) {
+  const res = await supabaseFetch(`offres_clients`, {
+    method: "POST",
+    headers: { Prefer: "return=representation" },
+    body: JSON.stringify(lignes),
+  });
+  if (!res.ok) return null;
+  return res.json();
+}
+
+async function chargerOffre(id) {
+  const res = await supabaseFetch(`offres_clients?id=eq.${id}&select=*`);
+  if (!res.ok) return null;
+  const rows = await res.json();
+  return rows[0] || null;
+}
+
+async function repondreOffre(id, statut) {
+  const res = await supabaseFetch(`offres_clients?id=eq.${id}`, {
+    method: "PATCH",
+    headers: { Prefer: "return=minimal" },
+    body: JSON.stringify({ statut, reponse_le: new Date().toISOString() }),
+  });
+  return res.ok;
+}
+
+async function chargerToutesOffres(code) {
+  const res = await supabaseFetch(`offres_clients?code=eq.${code}&select=*&order=created_at.desc`);
+  if (!res.ok) return [];
+  return res.json();
+}
+
+// ============================================================
 // Stockage local
 // ============================================================
 function lireLocal(storageKey, initial) {
@@ -756,12 +791,85 @@ function PageReservation({ id }) {
 }
 
 // ============================================================
+// Page publique de réponse à une offre commerciale (accepter/refuser)
+// ============================================================
+function PageOffre({ id }) {
+  const [offre, setOffre] = useState(undefined); // undefined = chargement, null = introuvable
+  const [enCours, setEnCours] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      const o = await chargerOffre(id);
+      setOffre(o);
+    })();
+  }, [id]);
+
+  async function repondre(statut) {
+    setEnCours(true);
+    const ok = await repondreOffre(id, statut);
+    if (ok) setOffre(prev => ({ ...prev, statut, reponse_le: new Date().toISOString() }));
+    setEnCours(false);
+  }
+
+  const S2 = {
+    root: { fontFamily:"'Inter',system-ui,sans-serif", background:"#F5F2EC", minHeight:"100vh", color:"#1C2630", display:"flex", alignItems:"center", justifyContent:"center", padding:20 },
+    card: { background:"white", border:"1px solid #DCD7CB", borderRadius:12, padding:26, maxWidth:460, width:"100%" },
+    title: { fontFamily:"'Oswald',sans-serif", fontSize:22, fontWeight:600, textTransform:"uppercase", marginBottom:6 },
+    sub: { fontSize:13, color:"#8A93A0", marginBottom:20 },
+    btn: (bg) => ({ fontFamily:"'Oswald',sans-serif", textTransform:"uppercase", fontSize:13, padding:"12px 16px", borderRadius:8, border:"none", cursor:"pointer", background:bg, color:"white", flex:1 }),
+  };
+
+  if (offre === undefined) return <div style={S2.root}><div style={{ color:"#8A93A0" }}>Chargement...</div></div>;
+  if (offre === null) {
+    return (
+      <div style={S2.root}>
+        <div style={S2.card}>
+          <div style={S2.title}>Lien invalide</div>
+          <div style={S2.sub}>Cette offre n'existe pas ou a expiré. Contacte directement ton interlocuteur.</div>
+        </div>
+      </div>
+    );
+  }
+  if (offre.statut === "accepte" || offre.statut === "refuse") {
+    return (
+      <div style={S2.root}>
+        <div style={S2.card}>
+          <div style={S2.title}>{offre.statut === "accepte" ? "✓ Offre acceptée" : "Offre déclinée"}</div>
+          <div style={{ fontSize:14, color:"#8A93A0" }}>Merci pour votre réponse, elle a bien été enregistrée.</div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={S2.root}>
+      <div style={S2.card}>
+        <div style={S2.title}>{offre.offre_titre}</div>
+        <div style={S2.sub}>{offre.client_nom}</div>
+        <div style={{ fontSize:14, lineHeight:1.6, whiteSpace:"pre-wrap", marginBottom:24, color:"#1C2630" }}>{offre.offre_description}</div>
+        <div style={{ display:"flex", gap:10 }}>
+          <button style={S2.btn("#5B8C6E")} onClick={() => repondre("accepte")} disabled={enCours}>
+            {enCours ? "..." : "✓ J'accepte"}
+          </button>
+          <button style={S2.btn("#C75450")} onClick={() => repondre("refuse")} disabled={enCours}>
+            {enCours ? "..." : "Décliner"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================
 // Composant racine
 // ============================================================
 export default function Root() {
   const [code, setCode] = useState(() => lireLocal("tournee_code", null));
   const reservationId = (() => {
     try { return new URLSearchParams(window.location.search).get("reservation"); } catch { return null; }
+  })();
+  const offreId = (() => {
+    try { return new URLSearchParams(window.location.search).get("offre"); } catch { return null; }
   })();
 
   function seDeconnecter() {
@@ -775,6 +883,7 @@ export default function Root() {
   }
 
   if (reservationId) return <PageReservation id={reservationId} />;
+  if (offreId) return <PageOffre id={offreId} />;
   if (!code) return <EcranConnexion onConnecte={onConnecte} />;
   return <App code={code} onDeconnecter={seDeconnecter} />;
 }
@@ -1799,6 +1908,7 @@ function App({ code, onDeconnecter }) {
                 </span>
               )}
             </button>
+            <button className={`tr-tab ${vue === "offres" ? "active" : ""}`} onClick={() => setVue("offres")} disabled={clients.length === 0}>Offres</button>
             <button className="tr-tab" onClick={onDeconnecter} title="Changer d'espace">⎋</button>
           </div>
         </header>
@@ -2216,6 +2326,11 @@ function App({ code, onDeconnecter }) {
         {vue === "reservations" && (
           <VueReservations code={code} clients={clients} onRenvoyer={renvoyerPropositionAutreCreneaux} onRelancer={relancerProposition} />
         )}
+
+        {/* VUE : OFFRES COMMERCIALES */}
+        {vue === "offres" && (
+          <VueOffres code={code} clients={clients} showToast={showToast} />
+        )}
       </div>
 
       {/* MODAL PLAN B */}
@@ -2509,6 +2624,186 @@ function VueReservations({ code, clients, onRenvoyer, onRelancer }) {
           </div>
         );
       })}
+    </div>
+  );
+}
+
+// ============================================================
+// Sous-composant : vue Offres commerciales
+// ============================================================
+function VueOffres({ code, clients, showToast }) {
+  const [titre, setTitre] = useState("");
+  const [description, setDescription] = useState("");
+  const [recherche, setRecherche] = useState("");
+  const [selectionIds, setSelectionIds] = useState(new Set());
+  const [envoiEnCours, setEnvoiEnCours] = useState(false);
+  const [offresPretes, setOffresPretes] = useState(null); // lignes créées, prêtes à envoyer une à une
+  const [offresEnvoyees, setOffresEnvoyees] = useState(new Set());
+  const [historique, setHistorique] = useState(null);
+  const [chargementHistorique, setChargementHistorique] = useState(true);
+  const [filtreHistorique, setFiltreHistorique] = useState("toutes");
+
+  async function chargerHistorique() {
+    setChargementHistorique(true);
+    const rows = await chargerToutesOffres(code);
+    setHistorique(rows);
+    setChargementHistorique(false);
+  }
+
+  useEffect(() => { chargerHistorique(); }, [code]);
+
+  const clientsFiltres = recherche.trim()
+    ? clients.filter(c => c.etablissement.toLowerCase().includes(recherche.toLowerCase()) || (c.ville || "").toLowerCase().includes(recherche.toLowerCase()))
+    : clients;
+
+  function toggleSelection(id) {
+    setSelectionIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
+  async function creerEtPreparer() {
+    if (!titre.trim() || !description.trim() || selectionIds.size === 0) {
+      showToast("Renseigne un titre, une description, et sélectionne au moins une pharmacie", "error");
+      return;
+    }
+    setEnvoiEnCours(true);
+    const lignes = Array.from(selectionIds).map(id => {
+      const c = clients.find(cl => cl.id === id);
+      return {
+        code, offre_titre: titre.trim(), offre_description: description.trim(),
+        client_id: id, client_nom: c?.etablissement || "Client", client_email: c?.email || null,
+        statut: "envoye",
+      };
+    });
+    const rows = await creerOffresClients(lignes);
+    setEnvoiEnCours(false);
+    if (!rows) { showToast("Erreur lors de la création de l'offre", "error"); return; }
+    setOffresPretes(rows);
+    setOffresEnvoyees(new Set());
+    showToast(`Offre créée pour ${rows.length} pharmacie${rows.length > 1 ? "s" : ""} — prépare l'envoi ci-dessous`, "ok");
+  }
+
+  function envoyerUnEmail(row) {
+    const lien = `${window.location.origin}${window.location.pathname}?offre=${row.id}`;
+    const sujet = encodeURIComponent(row.offre_titre);
+    const corps = encodeURIComponent(`Bonjour,\n\n${row.offre_description}\n\nMerci de me faire part de votre réponse via ce lien :\n${lien}\n\nCordialement`);
+    window.location.href = `mailto:${row.client_email || ""}?subject=${sujet}&body=${corps}`;
+    setOffresEnvoyees(prev => new Set([...prev, row.id]));
+  }
+
+  function toutRecommencer() {
+    setTitre(""); setDescription(""); setSelectionIds(new Set()); setOffresPretes(null); setOffresEnvoyees(new Set());
+    chargerHistorique();
+  }
+
+  const STATUT_BADGE = {
+    envoye: { label: "Envoyé — sans réponse", bg: "#FBF0DA", color: "#7A5C00" },
+    accepte: { label: "Accepté", bg: "#DCEAE0", color: "#27500A" },
+    refuse: { label: "Refusé", bg: "#FCEEED", color: "#8A3530" },
+  };
+
+  const historiqueFiltre = (historique || []).filter(o => filtreHistorique === "toutes" ? true : o.statut === filtreHistorique);
+  const nbAcceptees = (historique || []).filter(o => o.statut === "accepte").length;
+  const nbRefusees = (historique || []).filter(o => o.statut === "refuse").length;
+  const nbSansReponse = (historique || []).filter(o => o.statut === "envoye").length;
+
+  return (
+    <div className="tr-grid">
+      <div className="tr-card">
+        <div className="tr-card-title"><Mail size={14}/> Nouvelle offre commerciale</div>
+        {!offresPretes ? (
+          <>
+            <div className="tr-field">
+              <label className="tr-label">Titre de l'offre</label>
+              <input className="tr-input" placeholder="Ex: Offre spéciale rentrée" value={titre} onChange={e => setTitre(e.target.value)} />
+            </div>
+            <div className="tr-field">
+              <label className="tr-label">Description</label>
+              <textarea className="tr-input" style={{ height:120, resize:"vertical" }} placeholder="Détail de l'offre, conditions, dates de validité..." value={description} onChange={e => setDescription(e.target.value)} />
+            </div>
+            <div className="tr-field">
+              <label className="tr-label">Pharmacies concernées ({selectionIds.size} sélectionnée{selectionIds.size > 1 ? "s" : ""})</label>
+              <div className="tr-search">
+                <Search size={15} />
+                <input className="tr-input" placeholder="Rechercher un établissement ou une ville..." value={recherche} onChange={(e) => setRecherche(e.target.value)} />
+              </div>
+              <div className="tr-clients-list">
+                {clientsFiltres.slice(0, 60).map(c => (
+                  <div key={c.id} className="tr-client-row" onClick={() => toggleSelection(c.id)} style={{ cursor:"pointer" }}>
+                    <div style={{ width:18, height:18, borderRadius:4, border:"1.5px solid", borderColor: selectionIds.has(c.id) ? "var(--orange)" : "var(--gris-clair)", background: selectionIds.has(c.id) ? "var(--orange)" : "white", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+                      {selectionIds.has(c.id) && <CheckCircle2 size={12} color="white" strokeWidth={3}/>}
+                    </div>
+                    <div className="tr-client-row-main">
+                      <div className="tr-client-row-name">{c.etablissement}</div>
+                      <div className="tr-client-row-meta">{c.ville}{!c.email ? " · pas d'email connu" : ""}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <button className="tr-btn tr-btn-primary tr-btn-full" onClick={creerEtPreparer} disabled={envoiEnCours}>
+              <Mail size={14}/> {envoiEnCours ? "Création..." : "Créer l'offre et préparer les envois"}
+            </button>
+          </>
+        ) : (
+          <>
+            <div style={{ fontSize:13, color:"var(--gris)", marginBottom:14, lineHeight:1.5 }}>
+              Clique sur chaque pharmacie pour ouvrir l'email pré-rempli (un par un, ta messagerie s'ouvre à chaque clic).
+            </div>
+            {offresPretes.map(row => (
+              <div key={row.id} style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:10, padding:"10px 12px", border:"1.5px solid var(--gris-clair)", borderRadius:8, marginBottom:8 }}>
+                <div>
+                  <div style={{ fontWeight:600, fontSize:13.5 }}>{row.client_nom}</div>
+                  <div style={{ fontSize:11.5, color:"var(--gris)" }}>{row.client_email || "pas d'email connu"}</div>
+                </div>
+                <button className="tr-btn tr-btn-sm" style={{ background: offresEnvoyees.has(row.id) ? "var(--vert)" : "var(--orange)", color:"white", border:"none" }}
+                  onClick={() => envoyerUnEmail(row)}>
+                  {offresEnvoyees.has(row.id) ? <><CheckCircle2 size={12}/> Envoyé</> : <><Mail size={12}/> Envoyer</>}
+                </button>
+              </div>
+            ))}
+            <button className="tr-btn tr-btn-outline tr-btn-full" style={{ marginTop:10 }} onClick={toutRecommencer}>
+              <Plus size={14}/> Nouvelle offre
+            </button>
+          </>
+        )}
+      </div>
+
+      <div className="tr-card">
+        <div className="tr-card-title" style={{ justifyContent:"space-between" }}>
+          <span style={{ display:"flex", alignItems:"center", gap:7 }}><History size={14}/> Historique des offres</span>
+          <button className="tr-btn tr-btn-sm tr-btn-outline" onClick={chargerHistorique}><RefreshCw size={12}/> Actualiser</button>
+        </div>
+        <div className="tr-mode-row" style={{ marginBottom:16 }}>
+          <button className={`tr-mode-btn ${filtreHistorique === "toutes" ? "active" : ""}`} onClick={() => setFiltreHistorique("toutes")}>Toutes ({(historique || []).length})</button>
+          <button className={`tr-mode-btn ${filtreHistorique === "envoye" ? "active" : ""}`} onClick={() => setFiltreHistorique("envoye")}>Sans réponse ({nbSansReponse})</button>
+          <button className={`tr-mode-btn ${filtreHistorique === "accepte" ? "active" : ""}`} onClick={() => setFiltreHistorique("accepte")}>Acceptées ({nbAcceptees})</button>
+          <button className={`tr-mode-btn ${filtreHistorique === "refuse" ? "active" : ""}`} onClick={() => setFiltreHistorique("refuse")}>Refusées ({nbRefusees})</button>
+        </div>
+        {chargementHistorique && <div className="tr-empty"><RefreshCw size={22} style={{ marginBottom:8, opacity:0.5 }}/><br/>Chargement...</div>}
+        {!chargementHistorique && historiqueFiltre.length === 0 && <div className="tr-empty">Aucune offre à afficher ici.</div>}
+        {!chargementHistorique && historiqueFiltre.map(o => {
+          const badge = STATUT_BADGE[o.statut] || STATUT_BADGE.envoye;
+          return (
+            <div key={o.id} style={{ border:"1.5px solid var(--gris-clair)", borderRadius:10, padding:14, marginBottom:10 }}>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:10, marginBottom:6 }}>
+                <div>
+                  <div style={{ fontWeight:700, fontSize:14 }}>{o.client_nom}</div>
+                  <div style={{ fontSize:12, color:"var(--gris)" }}>{o.offre_titre}</div>
+                </div>
+                <span className="tr-badge" style={{ background:badge.bg, color:badge.color }}>{badge.label}</span>
+              </div>
+              <div style={{ fontSize:11, color:"var(--gris)" }}>
+                Envoyée le {formatDateCourt(o.created_at?.slice(0,10))}
+                {o.reponse_le ? ` · réponse le ${formatDateCourt(o.reponse_le.slice(0,10))}` : ""}
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
