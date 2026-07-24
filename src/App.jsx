@@ -1600,6 +1600,11 @@ function App({ code, onDeconnecter }) {
     );
     const destinataire = client?.email || "";
     window.location.href = `mailto:${destinataire}?subject=${sujet}&body=${corps}`;
+    await supabaseFetch(`propositions_rdv?id=eq.${proposition.id}`, {
+      method: "PATCH",
+      headers: { Prefer: "return=minimal" },
+      body: JSON.stringify({ derniere_relance: new Date().toISOString() }),
+    });
     showToast("Relance préparée — vérifie ta messagerie", "ok");
   }
 
@@ -2484,6 +2489,11 @@ function VueReservations({ code, clients, onRenvoyer, onRelancer }) {
               </div>
             )}
             <div style={{ fontSize:11, color:"var(--gris)", marginTop:6 }}>Proposé le {formatDateCourt(p.created_at?.slice(0,10))}{p.statut === "en_attente" && joursDepuis(p.created_at) >= 1 ? ` · en attente depuis ${joursDepuis(p.created_at)} jour${joursDepuis(p.created_at) > 1 ? "s" : ""}` : ""}</div>
+            {p.derniere_relance && (
+              <div style={{ fontSize:11, color:"var(--or)", marginTop:2 }}>
+                🔄 Dernière relance le {new Date(p.derniere_relance).toLocaleDateString("fr-FR")} à {new Date(p.derniere_relance).toLocaleTimeString("fr-FR", { hour:"2-digit", minute:"2-digit" })}
+              </div>
+            )}
             {p.statut === "en_attente" && (
               <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginTop:10 }}>
                 <button className="tr-btn tr-btn-outline tr-btn-sm"
