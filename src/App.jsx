@@ -712,6 +712,22 @@ function PageReservation({ id }) {
           heureFin: hhmmToMin(creneau.fin),
         }],
       },
+      // Ajoute un "override" comme pour un repositionnement manuel dans l'Agenda, afin que
+      // l'horaire réellement choisi par le client soit respecté partout (au lieu d'être recalculé
+      // à partir des trajets, ce qui donnait 08h30 par défaut sur une journée sans autre point de repère).
+      agendaRdvs: [
+        ...(donnees?.agendaRdvs || []),
+        {
+          id: "override-" + Math.random().toString(36).slice(2, 10),
+          titre: proposition.client_nom,
+          type: "tournee",
+          jour: creneau.jour,
+          debut: creneau.debut,
+          fin: creneau.fin,
+          readOnly: false,
+          overrideTournee: proposition.client_id,
+        },
+      ],
       clients: (donnees?.clients || []).map(c => c.id === proposition.client_id ? { ...c, prochainRdv: creneau.jour, statutRdv: "Fixe" } : c),
     };
     const ok = await sauvegarderDonneesDistantes(proposition.code, next);
@@ -1638,6 +1654,22 @@ function App({ code, onDeconnecter }) {
       ...p,
       [sugg.jour]: [...(p[sugg.jour] || []), { clientId: clientSelectionne.id, heureArrivee: arriveeFinal, heureFin: finFinal }],
     }));
+    // Ajoute un "override" pour que l'horaire réellement confirmé (notamment si tu l'as ajusté
+    // manuellement, ou pour une option découcher) soit respecté partout, au lieu d'être recalculé
+    // à partir des trajets — même bug que celui corrigé pour les réservations clients en ligne.
+    setAgendaRdvs((prev) => [
+      ...(prev || []).filter(r => !(r.overrideTournee === clientSelectionne.id && r.jour === sugg.jour)),
+      {
+        id: "override-" + uid(),
+        titre: clientSelectionne.etablissement,
+        type: "tournee",
+        jour: sugg.jour,
+        debut: minToHHMMInput(arriveeFinal),
+        fin: minToHHMMInput(finFinal),
+        readOnly: false,
+        overrideTournee: clientSelectionne.id,
+      },
+    ]);
     setClients((prev) => prev.map((c) => (c.id === clientSelectionne.id ? { ...c, prochainRdv: sugg.jour, statutRdv: "Fixe", dureeDefaut: dureeFinal } : c)));
     showToast(`${clientSelectionne.etablissement} placé le ${formatDateFr(sugg.jour)} à ${minToHHMM(arriveeFinal)}`, "ok");
     setCreneauRetenu({ client: { ...clientSelectionne, dureeDefaut: dureeFinal }, sugg: { ...sugg, arrivee: arriveeFinal, fin: finFinal, duree: dureeFinal } });
