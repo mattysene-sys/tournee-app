@@ -834,10 +834,6 @@ function App({ code, onDeconnecter }) {
     } catch {}
   }
 
-  useEffect(() => {
-    if (vue === "reservations") verifierRelancesEnAttente();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [vue]);
 
   async function verifierConfirmationsRdv() {
     if (!code) return;
@@ -930,6 +926,12 @@ function App({ code, onDeconnecter }) {
   }, [code]);
 
   const [vue, setVue] = useState("import");
+
+  useEffect(() => {
+    if (vue === "reservations") verifierRelancesEnAttente();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [vue]);
+
   const [importStatus, setImportStatus] = useState(null);
   const [geocodageProgress, setGeocodageProgress] = useState(null);
   const [recherche, setRecherche] = useState("");
@@ -2184,7 +2186,6 @@ function App({ code, onDeconnecter }) {
             setPeriodesBloquees={setPeriodesBloquees}
             clients={clients}
             clientsById={clientsById}
-            rdvParJourCalcule={rdvParJourCalcule}
             onOuvrirFiche={setFicheClient}
             onChercherCreneau={chercherCreneau}
             setVue={setVue}
